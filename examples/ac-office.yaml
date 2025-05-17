@@ -1,0 +1,6 @@
+substitutions:
+  name: office-ac
+  friendly_name: Office
+  static_ip: 192.168.1.11
+
+<<: !include ac-common.yaml

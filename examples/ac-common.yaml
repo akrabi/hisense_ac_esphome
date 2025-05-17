@@ -1,0 +1,110 @@
+external_components:
+  - source: components
+    components: [hisense_ac]
+
+esphome:
+  name: $name
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: DEBUG
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_pass
+
+web_server:
+  port: 80
+  auth:
+    username: !secret web_server_user
+    password: !secret web_server_pass
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pass
+
+  manual_ip:
+    # Set this to the IP of the ESP
+    static_ip: ${static_ip}
+    # Set this to the IP address of the router. Often ends with .1
+    gateway: !secret wifi_gateway
+    # The subnet of the network. 255.255.255.0 works for most home networks.
+    subnet: 255.255.255.0
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${friendly_name} Hotspot
+    password: !secret wifi_ap_pass
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO16
+  rx_pin: GPIO17
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+climate:
+  - platform: hisense_ac
+    name: "Air Conditioner"
+    temperature_unit: CELSIUS
+    uart_id: uart_bus
+    compressor_frequency:
+      name: "Compressor Frequency"
+      unit_of_measurement: "Hz"
+      device_class: "frequency"
+    compressor_frequency_setting:
+      name: "Compressor Frequency Setting"
+      unit_of_measurement: "Hz"
+      device_class: "frequency"
+    compressor_frequency_send:
+      name: "Compressor Frequency Send"
+      unit_of_measurement: "Hz"
+      device_class: "frequency"
+    outdoor_temperature:
+      name: "Outdoor Temperature"
+      unit_of_measurement: "°C"
+      device_class: "temperature"
+    outdoor_condenser_temperature:
+      name: "Outdoor Condenser Temperature"
+      unit_of_measurement: "°C"
+      device_class: "temperature"
+    compressor_exhaust_temperature:
+      name: "Compressor Exhaust Temperature"
+      unit_of_measurement: "°C"
+      device_class: "temperature"
+    target_exhaust_temperature:
+      name: "Target Exhaust Temperature"
+      unit_of_measurement: "°C"
+      device_class: "temperature"
+    indoor_pipe_temperature:
+      name: "Indoor Evaporator Inlet Temperature"
+      unit_of_measurement: "°C"
+      device_class: "temperature"
+    indoor_humidity_setting:
+      name: "Indoor Humidity Setting"
+      unit_of_measurement: "%"
+      device_class: "humidity"
+    indoor_humidity_status:
+      name: "Indoor Humidity Status"
+      unit_of_measurement: "%"
+      device_class: "humidity"
+
+switch:
+  - platform: restart
+    name: "Restart ESP"
+
+captive_portal:

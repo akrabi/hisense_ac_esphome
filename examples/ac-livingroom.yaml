@@ -1,0 +1,6 @@
+substitutions:
+  name: livingroom-ac
+  friendly_name: Living Room
+  static_ip: 192.168.1.12
+
+<<: !include ac-common.yaml
