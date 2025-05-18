@@ -102,3 +102,13 @@ uart:
   parity: NONE
   stop_bits: 1
 ```
+
+### Debug Logging
+
+Enable detailed logging by adding to your configuration:
+
+```yaml
+logger:
+  level: DEBUG
+  baud_rate: 0
+```

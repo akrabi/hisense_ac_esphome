@@ -1,6 +1,7 @@
 # Hisense Air Conditioner Component for ESPHome
 
-An ESPHome external component for controlling Hisense air conditioners. This component provides comprehensive control and monitoring capabilities for your Hisense AC unit through Home Assistant integration.
+This project is a replacement hardware and a matching ESPHome external component for  Hisense Air Conditioners Wifi Module. While these Wifi modules allow control over the AC (even local only) with [integration to HA](https://github.com/deiger/AirCon), the module itself is highly unreliable.
+By replacing the existing Hisense module with our custom one we achieve better reliabilty, faster response time and additional information about the AC unit.
 
 ## Disclaimer
 
@@ -24,41 +25,15 @@ An ESPHome external component for controlling Hisense air conditioners. This com
 ## Hardware
 
 ### Requirements
-- A compatible Hisense AC unit (see [COMPATIBLE_DEVICES.md](doc/COMPATIBLE_DEVICES.md) for tested models)
-- ESP32 development board (tested with ESP32-DevKitC)
-- RS485<->Uart(TTL) converter
-- UART connection to AC unit
+A compatible AC unit with a Hisense Wifi Module (see [compatible devices](doc/hardware/COMPATIBLE_DEVICES.md) for tested models)
 
 ### Setup
-TODO - add schematic and pictures
+See the [hardware](doc/hardware/README.md) documentation for further details.
 
 ## Configuration
 
 For a complete example configuration including ESP32 setup, WiFi configuration, and all available options, see [configuration](doc/configuration/README.md).
 
-## Troubleshooting
-
-### Common Issues
-
-1. **No Communication**
-   - Verify TX/RX pins are correctly connected (TX → RX, RX → TX)
-   - Confirm UART settings (baud rate, data bits, parity, stop bits)
-   - Check ground connection between ESP32 and AC unit
-
-2. **Erratic Behavior**
-   - Enable debug logging to monitor communication
-   - Verify power supply is stable
-   - Check for interference on UART lines
-
-### Debug Logging
-
-Enable detailed logging by adding to your configuration:
-
-```yaml
-logger:
-  level: DEBUG
-  baud_rate: 0
-```
 
 ## Contributing
 
