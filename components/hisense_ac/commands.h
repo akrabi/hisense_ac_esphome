@@ -6,7 +6,7 @@ namespace esphome {
 namespace hisense_ac {
 
 // Common command sizes
-constexpr uint8_t CMD_SIZE = 52;
+constexpr uint8_t CMD_SIZE = 50;
 
 // Power commands
 extern uint8_t on[CMD_SIZE];
