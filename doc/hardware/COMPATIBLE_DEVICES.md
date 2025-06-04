@@ -3,7 +3,11 @@
 This document lists the Hisense AC models that have been tested and confirmed to work with this ESPHome component.
 
 ## Confirmed Working Models
-- TORNADO TOP-INV-120A (WIFI)
+
+| AC Model | WiFi Module |
+|----------|-------------|
+| Tornado TOP-INV-120A | AEH-W4F1 |
+| Hisense AST-12UW4RVETG00A | AEH-W4E1 |
 
 ## Adding Your Device
 
