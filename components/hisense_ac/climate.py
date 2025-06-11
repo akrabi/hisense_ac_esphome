@@ -46,7 +46,7 @@ SENSOR_CONFIG_SCHEMA = sensor.sensor_schema().extend({
     cv.Optional(CONF_DEVICE_CLASS): cv.string,
 })
 
-CONFIG_SCHEMA = climate.CLIMATE_SCHEMA.extend({
+CONFIG_SCHEMA = climate.climate_schema(HisenseAC).extend({
     cv.GenerateID(): cv.declare_id(HisenseAC),
     cv.Optional(CONF_TEMP_UNIT, default='CELSIUS'): cv.enum(TEMP_UNITS, upper=True),
     cv.Optional(CONF_COMPRESSOR_FREQUENCY): SENSOR_CONFIG_SCHEMA,
