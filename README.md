@@ -34,6 +34,19 @@ See the [hardware](doc/hardware/README.md) documentation for further details.
 
 For a complete example configuration including ESP32 setup, WiFi configuration, and all available options, see [configuration](doc/configuration/README.md).
 
+```yaml
+external_components:
+  - source: github://akrabi/hisense_ac_esphome
+    components: [hisense_ac]
+climate:
+  - platform: hisense_ac
+    name: "Air Conditioner"
+    temperature_unit: CELSIUS
+    uart:
+      tx_pin: GPIO16
+      rx_pin: GPIO17
+      baud_rate: 9600
+```
 
 ## Contributing
 
