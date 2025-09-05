@@ -308,21 +308,20 @@ void HisenseAC::update()
     set_sensor(indoor_pipe_temperature, ((Device_Status*)uart_buf)->indoor_pipe_temperature);
     set_sensor(indoor_humidity_setting, ((Device_Status*)uart_buf)->indoor_humidity_setting);
     set_sensor(indoor_humidity_status, ((Device_Status*)uart_buf)->indoor_humidity_status);
+    save_target_temperture();
 }
 
 void HisenseAC::control(const climate::ClimateCall &call)
 {
+    ESP_LOGD("hisense_ac", "Received climate call with mode: %s, target_temp: %.1f, fan_mode: %s, swing_mode: %s",
+             call.get_mode().has_value() ? climate::climate_mode_to_string(call.get_mode().value()) : LOG_STR("Unknown"),
+             call.get_target_temperature().has_value() ? call.get_target_temperature().value() : 0.0f,
+             call.get_fan_mode().has_value() ? climate::climate_fan_mode_to_string(call.get_fan_mode().value()) : LOG_STR("Unknown"),
+             call.get_swing_mode().has_value() ? climate::climate_swing_mode_to_string(call.get_swing_mode().value()) : LOG_STR("Unknown"));
+
     if (call.get_mode().has_value())
     {
-        // Save target temperature since it gets messed up by the mode switch command
-        if (this->mode == climate::CLIMATE_MODE_COOL && target_temperature > 0)
-        {
-            cool_tgt_temp = target_temperature;
-        }
-        else if (this->mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0)
-        {
-            heat_tgt_temp = target_temperature;
-        }
+        save_target_temperture();
 
         // User requested mode change
         climate::ClimateMode md = *call.get_mode();
@@ -334,25 +333,25 @@ void HisenseAC::control(const climate::ClimateCall &call)
 
         switch (md)
         {
-        case climate::CLIMATE_MODE_OFF:
-            blocking_send(off, sizeof(off));
-            break;
-        case climate::CLIMATE_MODE_COOL:
-            blocking_send(mode_cool, sizeof(mode_cool));
-            set_temp(cool_tgt_temp);
-            break;
-        case climate::CLIMATE_MODE_HEAT:
-            blocking_send(mode_heat, sizeof(mode_heat));
-            set_temp(heat_tgt_temp);
-            break;
-        case climate::CLIMATE_MODE_FAN_ONLY:
-            blocking_send(mode_fan, sizeof(mode_fan));
-            break;
-        case climate::CLIMATE_MODE_DRY:
-            blocking_send(mode_dry, sizeof(mode_dry));
-            break;
-        default:
-            break;
+            case climate::CLIMATE_MODE_OFF:
+                blocking_send(off, sizeof(off));
+                break;
+            case climate::CLIMATE_MODE_COOL:
+                blocking_send(mode_cool, sizeof(mode_cool));
+                set_temp(cool_tgt_temp);
+                break;
+            case climate::CLIMATE_MODE_HEAT:
+                blocking_send(mode_heat, sizeof(mode_heat));
+                set_temp(heat_tgt_temp);
+                break;
+            case climate::CLIMATE_MODE_FAN_ONLY:
+                blocking_send(mode_fan, sizeof(mode_fan));
+                break;
+            case climate::CLIMATE_MODE_DRY:
+                blocking_send(mode_dry, sizeof(mode_dry));
+                break;
+            default:
+                break;
         }
 
         // Publish updated state
@@ -485,6 +484,19 @@ void HisenseAC::control(const climate::ClimateCall &call)
 
         preset = pre;
         this->publish_state();
+    }
+}
+
+void HisenseAC::save_target_temperture()
+{
+    // Save target temperature since it gets messed up by the mode switch command
+    if (this->mode == climate::CLIMATE_MODE_COOL && target_temperature > 0)
+    {
+        cool_tgt_temp = target_temperature;
+    }
+    else if (this->mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0)
+    {
+        heat_tgt_temp = target_temperature;
     }
 }
 

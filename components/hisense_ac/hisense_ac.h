@@ -35,6 +35,7 @@ public:
     void loop() override;
     void update() override;
     void control(const climate::ClimateCall &call) override;
+    void save_target_temperture();
     climate::ClimateTraits traits() override;
 
     sensor::Sensor *compressor_frequency{nullptr};
@@ -51,8 +52,8 @@ public:
 private:
     const std::string trace_tag = "hisense_ac";
     Temperature_Unit temp_unit;
-    float heat_tgt_temp = 16.1111f;
-    float cool_tgt_temp = 26.6667f;
+    float heat_tgt_temp = 25.0f;
+    float cool_tgt_temp = 25.0f;
     static const int UART_BUF_SIZE = 128;
     uint8_t uart_buf[UART_BUF_SIZE];
     bool wait_for_rx = false;
