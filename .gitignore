@@ -1,5 +1,5 @@
 .esphome
 __pycache__
-venv
+[?.]venv
 .vscode
 /*.yaml

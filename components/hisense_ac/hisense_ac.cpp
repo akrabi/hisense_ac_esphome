@@ -504,7 +504,8 @@ climate::ClimateTraits HisenseAC::traits()
 {
     // The capabilities of the climate device
     climate::ClimateTraits traits = climate::ClimateTraits();
-    traits.set_supports_current_temperature(true);
+    traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
+    traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);
     traits.set_visual_min_temperature(16);
     traits.set_visual_max_temperature(30);
     traits.set_visual_temperature_step(1);
@@ -529,7 +530,6 @@ climate::ClimateTraits HisenseAC::traits()
     traits.set_supported_presets({climate::CLIMATE_PRESET_NONE,
                                     climate::CLIMATE_PRESET_BOOST,
                                     climate::CLIMATE_PRESET_ECO});
-    traits.set_supports_action(true);
     return traits;
 }
 
