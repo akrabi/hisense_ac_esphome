@@ -20,6 +20,8 @@ climate:
   - platform: hisense_ac
     name: "Air Conditioner"
     temperature_unit: CELSIUS
+    display:
+      name: "Display"
     uart:
       tx_pin: GPIO16
       rx_pin: GPIO17
@@ -34,6 +36,8 @@ climate:
     name: "Air Conditioner"
     temperature_unit: CELSIUS
     uart_id: uart_bus
+    display:
+      name: "Display"
     # Optional sensor configurations
     compressor_frequency:
       name: "Compressor Frequency"
@@ -72,6 +76,7 @@ climate:
 ### Required Configuration
 - **name** (*Required*, string): The name of the climate device
 - **temperature_unit** (*Optional*, string): The temperature unit to use. Can be `CELSIUS` or `FAHRENHEIT`. Defaults to `CELSIUS`
+- **display** (*Optional*, switch): Exposes the indoor unit display as a switch. Set `name` to enable it in Home Assistant.
 - **uart** (*Required*): UART bus configuration
   - **tx_pin** (*Required*, pin): TX pin
   - **rx_pin** (*Required*, pin): RX pin

@@ -62,6 +62,8 @@ climate:
     name: "Air Conditioner"
     temperature_unit: CELSIUS
     uart_id: uart_bus
+    display:
+      name: "Display"
     compressor_frequency:
       name: "Compressor Frequency"
       unit_of_measurement: "Hz"

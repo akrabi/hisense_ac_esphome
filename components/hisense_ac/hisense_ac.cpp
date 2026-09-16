@@ -55,6 +55,34 @@ void HisenseAC::set_indoor_humidity_status(sensor::Sensor *sensor) {
     indoor_humidity_status = sensor; 
 }
 
+void HisenseAC::set_display_switch(switch_::Switch *display_switch) {
+    display_switch_ = display_switch;
+}
+
+void HisenseAC::set_display(bool state) {
+    display_state_pending_ = true;
+    display_target_state_ = state;
+    display_state_pending_since_ = millis();
+
+    if (state)
+    {
+        blocking_send(display_on, sizeof(display_on));
+    }
+    else
+    {
+        blocking_send(display_off, sizeof(display_off));
+    }
+
+    // The command response can still contain the previous display state.
+    // Queue a fresh status request so the desired state is confirmed quickly.
+    request_update();
+}
+
+void HisenseACDisplaySwitch::write_state(bool state) {
+    parent_->set_display(state);
+    publish_state(state);
+}
+
 void HisenseAC::setup()
 {
     if (compressor_frequency != nullptr)
@@ -273,6 +301,39 @@ void HisenseAC::loop()
             else if (((Device_Status*)uart_buf)->wind_status == 0)
             {
                 fan_mode = climate::CLIMATE_FAN_AUTO;
+            }
+
+            if (display_switch_ != nullptr)
+            {
+                // Verified on ACOND ASTI-09UW4RVEDC00 (AEH-W4B1):
+                // display_on/off changes status byte 37 (zero-based) between
+                // 0x80 and 0x00 (back_led); display_led (0x40) remains clear.
+                // Other indoor-unit variants have not been verified.
+                bool display_state = ((Device_Status*)uart_buf)->back_led;
+                bool accept_display_state = true;
+
+                if (display_state_pending_)
+                {
+                    if (display_state == display_target_state_)
+                    {
+                        display_state_pending_ = false;
+                    }
+                    else if (millis() - display_state_pending_since_ < DISPLAY_STATE_TIMEOUT_MS)
+                    {
+                        accept_display_state = false;
+                        ESP_LOGV("hisense_ac", "Ignoring stale display state while waiting for command confirmation.");
+                    }
+                    else
+                    {
+                        display_state_pending_ = false;
+                        ESP_LOGW("hisense_ac", "Display command was not confirmed within the timeout.");
+                    }
+                }
+
+                if (accept_display_state)
+                {
+                    display_switch_->publish_state(display_state);
+                }
             }
 
             // Save target temperature since it gets messed up by the mode switch command

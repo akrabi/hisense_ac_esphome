@@ -15,6 +15,7 @@ By replacing the existing Hisense module with our custom one we achieve better r
   - Swing modes: Off, Vertical, Horizontal, Both
   - Temperature control
   - Presets: None, Boost (Turbo), Eco (Energy Save)
+  - Optional display switch
 
 - **Advanced Monitoring**
   - Compressor frequency monitoring and control
@@ -42,6 +43,8 @@ climate:
   - platform: hisense_ac
     name: "Air Conditioner"
     temperature_unit: CELSIUS
+    display:
+      name: "Display"
     uart:
       tx_pin: GPIO16
       rx_pin: GPIO17

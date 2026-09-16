@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import climate, uart, sensor
+from esphome.components import climate, uart, sensor, switch
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
@@ -15,10 +15,11 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ['uart']
-AUTO_LOAD = ['sensor']
+AUTO_LOAD = ['sensor', 'switch']
 
 hisense_ac_ns = cg.esphome_ns.namespace('hisense_ac')
 HisenseAC = hisense_ac_ns.class_('HisenseAC', climate.Climate, cg.PollingComponent, uart.UARTDevice)
+HisenseACDisplaySwitch = hisense_ac_ns.class_('HisenseACDisplaySwitch', switch.Switch)
 
 CONF_TEMP_UNIT = 'temperature_unit'
 TempUnit = hisense_ac_ns.enum('Temperature_Unit')
@@ -38,6 +39,7 @@ CONF_TARGET_EXHAUST_TEMPERATURE = 'target_exhaust_temperature'
 CONF_INDOOR_PIPE_TEMPERATURE = 'indoor_pipe_temperature'
 CONF_INDOOR_HUMIDITY_SETTING = 'indoor_humidity_setting'
 CONF_INDOOR_HUMIDITY_STATUS = 'indoor_humidity_status'
+CONF_DISPLAY = 'display'
 
 SENSOR_CONFIG_SCHEMA = sensor.sensor_schema().extend({
     cv.GenerateID(CONF_ID): cv.declare_id(sensor.Sensor),
@@ -59,6 +61,7 @@ CONFIG_SCHEMA = climate.climate_schema(HisenseAC).extend({
     cv.Optional(CONF_INDOOR_PIPE_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
     cv.Optional(CONF_INDOOR_HUMIDITY_SETTING): SENSOR_CONFIG_SCHEMA,
     cv.Optional(CONF_INDOOR_HUMIDITY_STATUS): SENSOR_CONFIG_SCHEMA,
+    cv.Optional(CONF_DISPLAY): switch.switch_schema(HisenseACDisplaySwitch),
 }).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA)
 
 async def setup_sensor(config, key, var_name, unit=None, device_class=None):
@@ -92,3 +95,9 @@ async def to_code(config):
     await setup_sensor(config, CONF_INDOOR_PIPE_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
     await setup_sensor(config, CONF_INDOOR_HUMIDITY_SETTING, var, UNIT_PERCENT, DEVICE_CLASS_HUMIDITY)
     await setup_sensor(config, CONF_INDOOR_HUMIDITY_STATUS, var, UNIT_PERCENT, DEVICE_CLASS_HUMIDITY)
+
+    if CONF_DISPLAY in config:
+        display_config = config[CONF_DISPLAY]
+        display_switch = cg.new_Pvariable(display_config[CONF_ID], var)
+        await switch.register_switch(display_switch, display_config)
+        cg.add(var.set_display_switch(display_switch))

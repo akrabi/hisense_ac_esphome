@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/components/climate/climate.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/switch/switch.h"
 #include "esphome/components/uart/uart.h"
 #include "device_status.h"
 
@@ -30,6 +31,8 @@ public:
     void set_indoor_pipe_temperature(sensor::Sensor *sensor);
     void set_indoor_humidity_setting(sensor::Sensor *sensor);
     void set_indoor_humidity_status(sensor::Sensor *sensor);
+    void set_display_switch(switch_::Switch *display_switch);
+    void set_display(bool state);
 
     void setup() override;
     void loop() override;
@@ -57,12 +60,26 @@ private:
     static const int UART_BUF_SIZE = 128;
     uint8_t uart_buf[UART_BUF_SIZE];
     bool wait_for_rx = false;
+    switch_::Switch *display_switch_{nullptr};
+    bool display_state_pending_{false};
+    bool display_target_state_{false};
+    uint32_t display_state_pending_since_{0};
+    static constexpr uint32_t DISPLAY_STATE_TIMEOUT_MS = 10000;
 
     int get_response(const uint8_t input, uint8_t *out);
     void blocking_send(uint8_t buf[], size_t sz);
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);
     void set_temp(float temp);
+};
+
+class HisenseACDisplaySwitch : public switch_::Switch {
+public:
+    explicit HisenseACDisplaySwitch(HisenseAC *parent) : parent_(parent) {}
+
+protected:
+    void write_state(bool state) override;
+    HisenseAC *parent_;
 };
 
 } // namespace hisense_ac
