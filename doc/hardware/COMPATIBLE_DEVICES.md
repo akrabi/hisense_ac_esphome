@@ -8,6 +8,7 @@ This document lists the Hisense AC models that have been tested and confirmed to
 |----------|-------------|
 | Tornado TOP-INV-120A | AEH-W4F1 |
 | Hisense AST-12UW4RVETG00A | AEH-W4E1 |
+| ACOND ASTI-09UW4RVEDC00 | AEH-W4B1 |
 
 ## Adding Your Device
 
