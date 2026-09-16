@@ -305,7 +305,10 @@ void HisenseAC::loop()
 
             if (display_switch_ != nullptr)
             {
-                // The indoor display state is reported in the back LED bit.
+                // Verified on ACOND ASTI-09UW4RVEDC00 (AEH-W4B1):
+                // display_on/off changes status byte 37 (zero-based) between
+                // 0x80 and 0x00 (back_led); display_led (0x40) remains clear.
+                // Other indoor-unit variants have not been verified.
                 bool display_state = ((Device_Status*)uart_buf)->back_led;
                 bool accept_display_state = true;
 
