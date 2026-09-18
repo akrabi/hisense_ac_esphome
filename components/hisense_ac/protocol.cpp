@@ -146,7 +146,8 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
 }
 
 bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status) {
-    if (size != STATUS_FRAME_SIZE || !valid_frame(frame, size) ||
+    if ((size != STATUS_FRAME_SIZE && size != EXTENDED_STATUS_FRAME_SIZE) ||
+        !valid_frame(frame, size) ||
         frame[CLASS_OFFSET] != STATUS_CLASS)
         return false;
 

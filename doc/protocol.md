@@ -2,7 +2,8 @@
 
 ## Supported envelope
 
-The receive parser supports decoded frames of 9–128 bytes:
+The receive parser supports decoded frames of 9–264 bytes, covering every value
+of the one-byte declared payload length (`255 + 9` maximum):
 
 | Decoded offset | Meaning |
 | --- | --- |
@@ -16,8 +17,8 @@ The receive parser supports decoded frames of 9–128 bytes:
 The checksum sums decoded offsets 2 through size − 5 inclusive. Interior `F4`
 bytes, including checksum bytes, must be doubled on the wire; each pair contributes
 one decoded byte and is summed only once. Header/footer markers are not stuffed.
-The retained 128-byte capacity is a supported-format boundary, not a claim that
-all Hisense units send frames below that limit.
+Wire size may be larger because of stuffing. The 264-byte decoded capacity is
+derived from the supported envelope, not from one model's observed response size.
 
 Each component has its own fixed-capacity parser and decoded snapshot. Partial
 frames expire after **100 ms between consumed bytes**, using rollover-safe
@@ -29,16 +30,35 @@ and a new header beginning where an invalid footer was expected.
 
 ## Supported status layout
 
-Only a checksum-valid **82-byte** response with **offset 13 = `0x66`** is decoded
-as full status. Both length and class are required. This is based on:
+Checksum-valid **82-byte and 160-byte** responses with **offset 13 = `0x66`**
+are decoded using only the existing shared status prefix (consumed fields end at
+offset 47). Both evidenced length and class are required. All other lengths
+remain framing-only: a longer valid envelope does not establish a status layout.
+This is based on:
 
 - The historical component's wire struct: 16 header bytes, 56 status bytes,
-  six extra bytes and four checksum/footer bytes (82 on the wire, regardless
+  six extra bytes and four checksum/footer bytes (82 decoded bytes, regardless
   of compiler-added alignment padding).
 - The independently checked raw public capture described in
   [tests/README.md](../tests/README.md): header `F4 F5 01 40 49`, class `66`,
   total 82 bytes and checksum `04 C3`. Source revision and timestamp are pinned.
   It is not a local hardware capture; its exact indoor-unit model is unknown.
+- [Issue #1](https://github.com/akrabi/hisense_ac_esphome/issues/1), first RX at
+  `19:31:05`: 83 wire bytes decode to 82 bytes because payload byte 50 (`F4`) is
+  doubled. Declared length `49`, checksum `04 9B`.
+- [Issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6), first RX at
+  `18:28:36`: the two consecutive RX log fragments form one 160-byte frame.
+  Declared length `97`, checksum `09 BA`. Its header offsets 0–15 match the
+  issue #1 header **except offset 4 (length)**; offsets 5–15 in both are
+  `01 00 FE 01 01 01 01 00 66 00 01`. There is no shifted/extra header byte before
+  the existing prefix at offset 16. These packet-only fixtures and provenance
+  are retained in [tests/README.md](../tests/README.md).
+
+This is receive-layout compatibility, **not a claim of model-specific control,
+capability, sensor meaning or sentinel handling**. No tail fields are inferred
+from expanded fork structs; offsets after the consumed prefix remain opaque
+but are included in checksum verification through the final payload byte.
+No zoffypal v3 or other model-specific protocol is enabled.
 
 Do not infer response semantics from inconsistent upstream prose or fixture
 descriptions. Short responses and other classes/lengths are deliberately not
@@ -235,12 +255,13 @@ frame until the next `feed()` call. Consume or copy it before feeding more bytes
 component discard a stale partial frame even with no subsequent UART traffic.
 
 `protocol::decode_status(frame, size, DeviceStatus &out)` independently validates
-the complete envelope and known layout, then assigns the typed snapshot. On
+the complete envelope and the evidenced 82/160-byte layouts, then assigns only
+the shared prefix to the typed snapshot. On
 failure `out` is unchanged. It uses explicit unsigned masks, big-endian checksum
 decoding and signed arithmetic, never packed bitfields or a raw-buffer cast.
 
 Native tests link this production implementation. Generated frame builders in
-the tests are synthetic stimulus only; the independently retained public capture
+the tests are synthetic stimulus only; the independently retained public captures
 and all original command goldens anchor checksum/framing checks.
 
 ## Deliberately unchanged

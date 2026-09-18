@@ -32,7 +32,8 @@ int main() {
     malformed[20] ^= 1;
     CHECK(deliver(ac, wire(malformed)) == 0);
     CHECK(ac.wait_for_rx);
-    for (size_t length : {size_t(9), size_t(21), size_t(48), size_t(81), size_t(83), size_t(128)}) {
+    for (size_t length : {size_t(9), size_t(21), size_t(48), size_t(81), size_t(83),
+                          size_t(128), size_t(159), size_t(161), size_t(264)}) {
         CHECK(deliver(ac, wire(synthetic(length))) == 0);
         CHECK(ac.wait_for_rx);
     }
@@ -55,5 +56,11 @@ int main() {
     CHECK(ac.wait_for_rx);
     CHECK(deliver(ac, capture()) == 1);
     CHECK(!ac.wait_for_rx);
+    ac.wait_for_rx = true;
+    CHECK(deliver(ac, capture("issue_1_status_82_escaped.hex")) == 1);
+    CHECK(!ac.wait_for_rx && ac.status_.indoor_temperature_setting == 19);
+    ac.wait_for_rx = true;
+    CHECK(deliver(ac, capture("issue_6_status_160.hex")) == 1);
+    CHECK(!ac.wait_for_rx && ac.status_.indoor_temperature_setting == 16);
     return 0;
 }
