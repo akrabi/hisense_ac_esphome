@@ -10,6 +10,7 @@ static_assert(SOC_UART_FIFO_LEN >= esphome::hisense_ac::transport::MAX_PACKET_SI
 
 namespace esphome {
 namespace hisense_ac {
+static const char *const TAG = "hisense_ac";
 namespace {
 bool encode_mode(climate::ClimateMode mode, uint8_t &out) {
     switch (mode) {
@@ -77,14 +78,19 @@ void HisenseACDisplaySwitch::write_state(bool state) {
 
 void HisenseAC::setup() {
     started_at_ = millis();
-    for (auto *sensor : {compressor_frequency, compressor_frequency_setting, compressor_frequency_send,
-                        outdoor_temperature, outdoor_condenser_temperature, compressor_exhaust_temperature,
-                        target_exhaust_temperature, indoor_pipe_temperature, indoor_humidity_setting,
-                        indoor_humidity_status}) {
-        if (sensor != nullptr) sensor->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
     request_update();
     update_warning_();
+}
+
+void HisenseAC::dump_config() {
+    LOG_CLIMATE("", "Hisense AC", this);
+    ESP_LOGCONFIG("hisense_ac", "  Protocol temperatures: %s", temp_unit == FAHRENHEIT ? "Fahrenheit" : "Celsius");
+    ESP_LOGCONFIG("hisense_ac", "  State reporting: %s", optimistic_ ? "optimistic with reconciliation" : "device-reported");
+    ESP_LOGCONFIG("hisense_ac", "  UART: dedicated ESP32 hardware, 9600 8N1");
+    ESP_LOGCONFIG("hisense_ac", "  Poll interval: %u ms; response timeout: %u ms; operation lifetime: %u ms",
+                  static_cast<unsigned>(get_update_interval()), static_cast<unsigned>(transport::RESPONSE_TIMEOUT_MS),
+                  static_cast<unsigned>(transport::OPERATION_TIMEOUT_MS));
+    ESP_LOGCONFIG("hisense_ac", "  Pending operation capacity: %u", static_cast<unsigned>(transport::QUEUE_CAPACITY));
 }
 
 void HisenseAC::loop() {

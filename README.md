@@ -14,7 +14,7 @@ By replacing the existing Hisense module with our custom one we achieve better r
   - Optional display switch
 
 - **Advanced Monitoring**
-  - Compressor frequency monitoring and control
+  - Compressor frequency monitoring
   - Multiple temperature sensors
   - Indoor humidity monitoring
   - System status tracking
@@ -33,20 +33,27 @@ See the [hardware](doc/hardware/README.md) documentation for further details.
 
 For a complete example configuration including ESP32 setup, WiFi configuration, and all available options, see [configuration](doc/configuration/README.md).
 
+Communication uses a dedicated ESP32 hardware UART with a bounded asynchronous
+command queue. State is reported by the AC by default; `optimistic: true` enables
+immediate control feedback with subsequent reconciliation. See the
+[migration notes](doc/configuration/README.md#state-reporting-and-migration).
+
 ```yaml
 external_components:
   - source: github://akrabi/hisense_ac_esphome
     components: [hisense_ac]
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
 climate:
   - platform: hisense_ac
     name: "Air Conditioner"
+    uart_id: uart_bus
     temperature_unit: CELSIUS
     display:
       name: "Display"
-    uart:
-      tx_pin: GPIO16
-      rx_pin: GPIO17
-      baud_rate: 9600
 ```
 
 ## Contributing

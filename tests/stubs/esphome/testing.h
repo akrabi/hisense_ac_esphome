@@ -10,12 +10,15 @@
 #define ESP_LOGD(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGV(...) ((void)0)
+#define ESP_LOGCONFIG(...) ((void)0)
+#define LOG_CLIMATE(...) ((void)0)
 namespace esphome {
 extern uint32_t test_clock;
 inline uint32_t millis() { return test_clock; }
 class Component {
 public:
     virtual void setup() {}
+    virtual void dump_config() {}
     virtual void loop() {}
     bool is_failed() const { return failed; }
     void status_set_warning(const char * = "") { warning = true; }

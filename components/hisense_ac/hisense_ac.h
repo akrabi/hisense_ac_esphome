@@ -40,6 +40,7 @@ public:
     bool set_display(bool state);
 
     void setup() override;
+    void dump_config() override;
     void loop() override;
     void update() override;
     void control(const climate::ClimateCall &call) override;
@@ -58,7 +59,6 @@ public:
     sensor::Sensor *indoor_humidity_status{nullptr};
 
 private:
-    const std::string trace_tag = "hisense_ac";
     Temperature_Unit temp_unit{CELSIUS};
     float heat_tgt_temp = NAN;
     float cool_tgt_temp = NAN;
