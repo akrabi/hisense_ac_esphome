@@ -1,0 +1,46 @@
+esphome:
+  name: hisense-test-full
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+logger:
+  baud_rate: 0
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+uart:
+  id: ac_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+climate:
+  - platform: hisense_ac
+    id: ac
+    name: Test AC
+    uart_id: ac_uart
+    temperature_unit: FAHRENHEIT
+    compressor_frequency:
+      name: Compressor frequency
+    compressor_frequency_setting:
+      name: Requested compressor frequency
+    compressor_frequency_send:
+      name: Sent compressor frequency
+    outdoor_temperature:
+      name: Outdoor temperature
+    outdoor_condenser_temperature:
+      name: Condenser temperature
+    compressor_exhaust_temperature:
+      name: Exhaust temperature
+    target_exhaust_temperature:
+      name: Target exhaust temperature
+    indoor_pipe_temperature:
+      name: Indoor pipe temperature
+    indoor_humidity_setting:
+      name: Requested humidity
+    indoor_humidity_status:
+      name: Indoor humidity
+    display:
+      name: Display

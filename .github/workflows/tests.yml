@@ -1,0 +1,20 @@
+name: Component tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests -q
+      - run: cmake -S tests -B .build/native -DPython3_EXECUTABLE="$(which python)"
+      - run: cmake --build .build/native
+      - run: ctest --test-dir .build/native --output-on-failure
+      - run: python -m esphome compile tests/minimal.yaml
