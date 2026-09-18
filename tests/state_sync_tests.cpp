@@ -1,6 +1,7 @@
 #include "test_support.h"
 #include "hisense_ac.h"
 #include "commands.h"
+#include "temperature.h"
 
 uint32_t esphome::test_clock = 0;
 using namespace esphome;
@@ -252,6 +253,68 @@ void display_reconciliation_and_instances() {
     CHECK(first.ac.current_temperature == 24 && second.ac.current_temperature == 29);
 }
 
+void temperature_units() {
+    for (bool fahrenheit : {false, true}) {
+        for (uint8_t raw = fahrenheit ? 61 : 16; raw <= (fahrenheit ? 90 : 32); ++raw) {
+            const auto celsius = temperature::from_device(raw, fahrenheit);
+            float normalized;
+            uint8_t encoded;
+            CHECK(temperature::normalize(celsius, fahrenheit, normalized, encoded));
+            CHECK(encoded == raw && std::fabs(normalized - celsius) < 0.0001f);
+            Rig rig(true);
+            rig.ac.set_temperature_unit(fahrenheit ? FAHRENHEIT : CELSIUS);
+            rig.ac.loop();
+            const auto old = static_cast<uint8_t>(raw == (fahrenheit ? 70 : 22) ? raw + 1 : (fahrenheit ? 70 : 22));
+            rig.receive(Rig::report(0x28, old, fahrenheit ? 77 : 25), 100);
+            CHECK(std::fabs(rig.ac.current_temperature - 25) < 0.0001f);
+            rig.temperature(celsius);
+            CHECK(std::fabs(rig.ac.target_temperature - celsius) < 0.0001f);
+            rig.ac.loop();
+            rig.receive(Rig::report(0x28, old, fahrenheit ? 77 : 25), 200);
+            CHECK(rig.bus.tx.back()[13] == 0x65);
+            CHECK(rig.bus.tx.back()[19] == raw * 2 + 1);
+            rig.until(800);
+            rig.receive(Rig::report(0x28, raw, fahrenheit ? 77 : 25), 801);
+            CHECK(!rig.ac.warning && std::fabs(rig.ac.target_temperature - celsius) < 0.0001f);
+        }
+    }
+    float normalized;
+    uint8_t encoded;
+    CHECK(temperature::normalize(23.4f, true, normalized, encoded));
+    CHECK(encoded == 74 && std::fabs(normalized - (70.0f / 3.0f)) < 0.0001f);
+    for (bool fahrenheit : {false, true}) {
+        for (float invalid : {NAN, INFINITY, -INFINITY, -1.0f, 0.0f, 15.9f, 33.0f, 256.0f}) {
+            CHECK(!temperature::normalize(invalid, fahrenheit, normalized, encoded));
+            Rig rig(true);
+            rig.ac.set_temperature_unit(fahrenheit ? FAHRENHEIT : CELSIUS);
+            rig.ac.loop();
+            rig.receive(Rig::report(0x28, fahrenheit ? 70 : 22, fahrenheit ? 77 : 25), 100);
+            const auto published = rig.ac.publications.size();
+            rig.temperature(invalid);
+            CHECK(rig.ac.publications.size() == published && rig.ac.warning);
+            CHECK(rig.bus.tx.size() == 1);
+        }
+    }
+    Rig memory(true);
+    memory.ac.set_temperature_unit(FAHRENHEIT);
+    memory.ac.loop();
+    memory.receive(Rig::report(0x28, 72, 77), 100);
+    memory.mode(climate::CLIMATE_MODE_HEAT, 25);
+    memory.ac.loop();
+    memory.receive(Rig::report(0x28, 72, 77), 200);
+    memory.until(800);
+    memory.receive(Rig::report(0x18, 61, 77), 801);
+    CHECK(memory.bus.tx.back() == Bytes(temp_77_F, temp_77_F + CMD_SIZE));
+    memory.until(1400);
+    memory.receive(Rig::report(0x18, 77, 77), 1401);
+    memory.mode(climate::CLIMATE_MODE_COOL);
+    memory.ac.loop();
+    memory.receive(Rig::report(0x18, 77, 77), 1500);
+    memory.until(2100);
+    memory.receive(Rig::report(0x28, 61, 77), 2101);
+    CHECK(memory.bus.tx.back() == Bytes(temp_72_F, temp_72_F + CMD_SIZE));
+}
+
 int main() {
     default_reported_state();
     optimistic_state_and_failures();
@@ -259,5 +322,6 @@ int main() {
     unknown_fields_and_presets();
     stable_targets_and_atomic_rejection();
     display_reconciliation_and_instances();
+    temperature_units();
     return 0;
 }

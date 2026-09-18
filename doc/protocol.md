@@ -272,3 +272,17 @@ state and confirms each change before sending another. Desired states, not
 precomputed toggles, are queued. Commands are not blindly retried: if a response
 is lost or the remote changes an axis between steps, the operation fails with a
 warning and the component requests status instead of guessing.
+
+## Temperature boundary
+
+Climate values, pending targets, and remembered heat/cool setpoints are Celsius.
+`temperature_unit` selects the protocol encoding, not the frontend display unit.
+Fahrenheit setpoints are rounded to whole Fahrenheit degrees before transmission;
+optimistic state shows that representable value converted back to Celsius.
+Invalid/non-finite or out-of-range requests are rejected before integer conversion.
+
+The command tables encode 16-32 C and 61-90 F. Default visual limits remain
+16-30 C in Celsius mode. Fahrenheit mode uses 61-86 F expressed in Celsius
+(approximately 16.111-30 C), with a 5/9 C step. The component does not change the
+AC's temperature-display unit. Auxiliary temperatures retain their existing
+protocol interpretation; they are not assumed to switch units with the setpoint.

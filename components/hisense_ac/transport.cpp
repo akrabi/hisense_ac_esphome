@@ -1,5 +1,6 @@
 #include "transport.h"
 #include "commands.h"
+#include "temperature.h"
 #include <initializer_list>
 
 namespace esphome {
@@ -38,7 +39,9 @@ bool Engine::matches(const DeviceStatus &s, const Request &r) {
         if (r.mode == MODE_OFF ? s.run_status != 0 : (s.run_status == 0 || s.mode_status != r.mode))
             return false;
     }
-    if ((r.fields & TEMPERATURE) && s.indoor_temperature_setting != r.temperature) return false;
+    if ((r.fields & TEMPERATURE) &&
+        std::fabs(temperature::from_device(s.indoor_temperature_setting, r.fahrenheit) - r.temperature) > 0.001f)
+        return false;
     if ((r.fields & FAN) && s.wind_status != r.fan) return false;
     if ((r.fields & SWING) && swing(s) != r.swing) return false;
     if ((r.fields & FIELD_DISPLAY) && s.back_led != r.display) return false;
@@ -46,15 +49,16 @@ bool Engine::matches(const DeviceStatus &s, const Request &r) {
 }
 
 bool Engine::enqueue(const Request &request, uint32_t now, uint32_t &generation) {
+    auto normalized = request;
+    uint8_t encoded_temperature;
     if (request.fields == 0 || (request.fields & ~(MODE|TEMPERATURE|FAN|SWING|PRESET|FIELD_DISPLAY)) ||
         ((request.fields & MODE) && request.mode > MODE_OFF) ||
         ((request.fields & SWING) && request.swing > 3) ||
         ((request.fields & PRESET) && request.preset > 2) ||
         ((request.fields & FAN) && request.fan != 0 && request.fan != 2 &&
          request.fan != 10 && request.fan != 14 && request.fan != 18) ||
-        ((request.fields & TEMPERATURE) &&
-         (request.temperature < (request.fahrenheit ? 61 : 16) ||
-          request.temperature > (request.fahrenheit ? 90 : 32))))
+        ((request.fields & TEMPERATURE) && !temperature::normalize(
+            request.temperature, request.fahrenheit, normalized.temperature, encoded_temperature)))
         return false;
     const bool absolute = request.fields == TEMPERATURE || request.fields == FAN || request.fields == FIELD_DISPLAY;
     const bool replace = count_ != 0 && absolute && queue_[count_ - 1].request.fields == request.fields;
@@ -65,7 +69,7 @@ bool Engine::enqueue(const Request &request, uint32_t now, uint32_t &generation)
         const auto old = queue_[--count_];
         listener_->operation_finished(old.generation, Result::SUPERSEDED, old.request);
     }
-    queue_[count_++] = {request, generation, now};
+    queue_[count_++] = {normalized, generation, now};
     return true;
 }
 
@@ -97,9 +101,12 @@ bool Engine::build_steps_() {
     if (r.fields & TEMPERATURE) {
         // Always restore after a mode command, even if the old setpoint matches.
         if ((r.fields & MODE) || !matches(status_, field(TEMPERATURE, r))) {
-            const auto *data = r.fahrenheit ? FAHRENHEIT_COMMANDS[r.temperature - 61] :
-                                             CELSIUS_COMMANDS[r.temperature - 16];
-            if (!add_step_(data, !r.fahrenheit && r.temperature == 16 ? CMD_SIZE + 1 : CMD_SIZE,
+            uint8_t encoded;
+            float normalized;
+            if (!temperature::normalize(r.temperature, r.fahrenheit, normalized, encoded)) return false;
+            const auto *data = r.fahrenheit ? FAHRENHEIT_COMMANDS[encoded - 61] :
+                                             CELSIUS_COMMANDS[encoded - 16];
+            if (!add_step_(data, !r.fahrenheit && encoded == 16 ? CMD_SIZE + 1 : CMD_SIZE,
                            field(TEMPERATURE, r), mode_guard)) return false;
         }
     }
