@@ -59,7 +59,10 @@ private:
     static void copy_field_(transport::Request &out, const transport::Request &in, uint8_t field) {
         switch (field) {
             case transport::MODE: out.mode = in.mode; break;
-            case transport::TEMPERATURE: out.temperature = in.temperature; break;
+            case transport::TEMPERATURE:
+                out.temperature = in.temperature;
+                out.fahrenheit = in.fahrenheit;
+                break;
             case transport::FAN: out.fan = in.fan; break;
             case transport::SWING: out.swing = in.swing; break;
             case transport::PRESET: out.preset = in.preset; break;

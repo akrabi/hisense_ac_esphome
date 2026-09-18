@@ -17,7 +17,7 @@ constexpr uint32_t OPERATION_TIMEOUT_MS = 10000;
 struct Request {
     uint8_t fields{0};
     uint8_t mode{MODE_OFF};
-    uint8_t temperature{0};
+    float temperature{0};  // Celsius; converted only for protocol I/O.
     uint8_t fan{0};
     uint8_t swing{0};  // horizontal=1, vertical=2
     uint8_t preset{0};

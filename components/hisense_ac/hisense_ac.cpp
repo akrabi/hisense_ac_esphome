@@ -1,4 +1,5 @@
 #include "hisense_ac.h"
+#include "temperature.h"
 #include <cmath>
 #ifdef USE_ESP32
 #include "esphome/components/uart/uart_component_esp_idf.h"
@@ -165,12 +166,13 @@ void HisenseAC::apply_status_() {
     bool unknown = false;
     if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
         (temp_unit == FAHRENHEIT && target > 45 && target < 91)) {
-        confirmed_.temperature = status_.indoor_temperature_setting;
+        confirmed_.temperature = temperature::from_device(status_.indoor_temperature_setting, temp_unit == FAHRENHEIT);
+        confirmed_.fahrenheit = temp_unit == FAHRENHEIT;
         confirmed_.fields |= transport::TEMPERATURE;
     } else unknown = true;
     if ((temp_unit == CELSIUS && current > 1 && current < 49) ||
         (temp_unit == FAHRENHEIT && current > 34 && current < 120))
-        reported_current_ = current;
+        reported_current_ = temperature::from_device(status_.indoor_temperature_status, temp_unit == FAHRENHEIT);
     else unknown = true;
     const bool running = status_.compressor_frequency > 0;
     if (status_.run_status == 0) {
@@ -293,11 +295,11 @@ void HisenseAC::control(const climate::ClimateCall &call) {
         ((request.fields & transport::MODE) && (request.mode == 1 || request.mode == 2) && std::isfinite(remembered))) {
         const float target = call.get_target_temperature().has_value() ? *call.get_target_temperature() :
                              remembered;
-        valid &= std::isfinite(target) && target >= (request.fahrenheit ? 61 : 16) &&
-                 target <= (request.fahrenheit ? 90 : 32);
-        if (valid) {
+        uint8_t encoded;
+        const bool encodable = temperature::normalize(target, request.fahrenheit, request.temperature, encoded);
+        valid &= encodable;
+        if (encodable) {
             request.fields |= transport::TEMPERATURE;
-            request.temperature = static_cast<uint8_t>(roundf(target));
         }
     }
     if (call.get_fan_mode().has_value()) {
@@ -350,9 +352,9 @@ climate::ClimateTraits HisenseAC::traits() {
     climate::ClimateTraits traits;
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);
-    traits.set_visual_min_temperature(16);
+    traits.set_visual_min_temperature(temp_unit == FAHRENHEIT ? temperature::from_device(61, true) : 16);
     traits.set_visual_max_temperature(30);
-    traits.set_visual_temperature_step(1);
+    traits.set_visual_temperature_step(temp_unit == FAHRENHEIT ? 5.0f / 9.0f : 1.0f);
     traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
                                climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY});
     traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
