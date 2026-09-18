@@ -53,6 +53,10 @@ climate:
 
 Feel free to submit issues and pull requests on GitHub.
 
+See [regression tests](tests/README.md) for credential-free ESP32 Arduino builds
+and native tests, and [UART protocol evidence](doc/protocol.md) for supported
+response layouts and remaining model-specific verification gaps.
+
 ## Acknowledgments
 
 This project was built based on [esphome_airconintl](https://github.com/pslawinski/esphome_airconintl).

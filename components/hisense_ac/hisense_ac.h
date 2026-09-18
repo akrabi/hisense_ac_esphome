@@ -6,7 +6,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/uart/uart.h"
-#include "device_status.h"
+#include "protocol.h"
 
 namespace esphome {
 namespace hisense_ac {
@@ -57,8 +57,8 @@ private:
     Temperature_Unit temp_unit;
     float heat_tgt_temp = 25.0f;
     float cool_tgt_temp = 25.0f;
-    static const int UART_BUF_SIZE = 128;
-    uint8_t uart_buf[UART_BUF_SIZE];
+    protocol::FrameParser parser_;
+    DeviceStatus status_{};
     bool wait_for_rx = false;
     switch_::Switch *display_switch_{nullptr};
     bool display_state_pending_{false};
@@ -66,7 +66,7 @@ private:
     uint32_t display_state_pending_since_{0};
     static constexpr uint32_t DISPLAY_STATE_TIMEOUT_MS = 10000;
 
-    int get_response(const uint8_t input, uint8_t *out);
+    bool get_response(uint8_t input);
     void blocking_send(uint8_t buf[], size_t sz);
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);
