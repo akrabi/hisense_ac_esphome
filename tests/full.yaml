@@ -23,6 +23,19 @@ climate:
     uart_id: ac_uart
     temperature_unit: FAHRENHEIT
     optimistic: true
+    supported_modes: ["OFF", COOL, HEAT, DRY, FAN_ONLY]
+    supported_swing_modes: ["OFF", VERTICAL, HORIZONTAL, BOTH]
+    supported_presets: [NONE, BOOST, ECO]
+    communication_connected:
+      name: AC connected
+    last_status_age:
+      name: Last status age
+    invalid_frame_count:
+      name: Invalid frames
+    response_timeout_count:
+      name: Response timeouts
+    queue_rejection_count:
+      name: Queue rejections
     compressor_frequency:
       name: Compressor frequency
     compressor_frequency_setting:

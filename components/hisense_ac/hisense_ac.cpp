@@ -63,6 +63,7 @@ bool HisenseAC::set_display(bool state) {
     request.display = state;
     uint32_t generation;
     if (!transport_.enqueue(request, millis(), generation)) {
+        if (queue_rejections_ != UINT32_MAX) ++queue_rejections_;
         ESP_LOGW("hisense_ac", "Display request rejected: operation queue full.");
         operation_warning_ = true;
         update_warning_();
@@ -80,6 +81,7 @@ void HisenseAC::setup() {
     started_at_ = millis();
     request_update();
     update_warning_();
+    publish_diagnostics_();
 }
 
 void HisenseAC::dump_config() {
@@ -106,12 +108,21 @@ void HisenseAC::loop() {
         if (get_response(read())) apply_status_();
     }
     transport_.tick(millis());
+    if (parser_.invalid_frames() != reported_frame_errors_ &&
+        (!has_frame_error_log_ || millis() - frame_error_log_at_ >= 30000)) {
+        reported_frame_errors_ = parser_.invalid_frames();
+        frame_error_log_at_ = millis();
+        has_frame_error_log_ = true;
+        ESP_LOGW(TAG, "Discarded invalid UART frames: %u; last reason: %s",
+                 static_cast<unsigned>(reported_frame_errors_), parser_.last_error_name());
+    }
     uint64_t stale = static_cast<uint64_t>(get_update_interval()) * 3;
     if (stale < 10000) stale = 10000;
     if (stale > 0x7FFFFFFF) stale = 0x7FFFFFFF;
     if (static_cast<uint32_t>(millis() - (has_status_ ? last_status_at_ : started_at_)) >= stale)
         communication_warning_ = true;
     update_warning_();
+    publish_diagnostics_();
     if (presentation_dirty_) publish_presentation_();
 }
 
@@ -151,6 +162,7 @@ bool HisenseAC::send_packet(const uint8_t *data, size_t size) {
 void HisenseAC::operation_finished(uint32_t generation, transport::Result result,
                                   const transport::Request &request) {
     (void) request;
+    if (result == transport::Result::TIMEOUT && response_timeouts_ != UINT32_MAX) ++response_timeouts_;
     const bool changed = pending_.complete(generation);
     presentation_dirty_ |= changed && optimistic_;
     if (result == transport::Result::UNVERIFIED) {
@@ -276,6 +288,18 @@ void HisenseAC::update_warning_() {
     else status_clear_warning();
 }
 
+void HisenseAC::publish_diagnostics_() {
+    const bool connected = has_status_ && !communication_warning_;
+    if (communication_connected_ != nullptr &&
+        (!communication_connected_->has_state() || communication_connected_->state != connected))
+        communication_connected_->publish_state(connected);
+    if (has_status_)
+        set_sensor(last_status_age_, static_cast<uint32_t>(millis() - last_status_at_) / 1000);
+    set_sensor(invalid_frame_count_, parser_.invalid_frames());
+    set_sensor(response_timeout_count_, response_timeouts_);
+    set_sensor(queue_rejection_count_, queue_rejections_);
+}
+
 void HisenseAC::accepted_(const transport::Request &request, uint32_t generation) {
     latest_generation_ = generation;
     pending_.accept(request, generation, millis());
@@ -294,7 +318,7 @@ void HisenseAC::control(const climate::ClimateCall &call) {
     bool valid = true;
     if (call.get_mode().has_value()) {
         request.fields |= transport::MODE;
-        valid &= encode_mode(*call.get_mode(), request.mode);
+        valid &= supported_modes_.count(*call.get_mode()) && encode_mode(*call.get_mode(), request.mode);
     }
     const float remembered = request.mode == 1 ? heat_tgt_temp : cool_tgt_temp;
     if (call.get_target_temperature().has_value() ||
@@ -314,9 +338,10 @@ void HisenseAC::control(const climate::ClimateCall &call) {
     }
     if (call.get_swing_mode().has_value()) {
         request.fields |= transport::SWING;
-        valid &= encode_swing(*call.get_swing_mode(), request.swing);
+        valid &= supported_swing_modes_.count(*call.get_swing_mode()) && encode_swing(*call.get_swing_mode(), request.swing);
     }
     if (call.get_preset().has_value()) {
+        valid &= supported_presets_.count(*call.get_preset()) != 0;
         request.fields |= transport::PRESET;
         switch (*call.get_preset()) {
             case climate::CLIMATE_PRESET_NONE: request.preset = 0; break;
@@ -326,8 +351,15 @@ void HisenseAC::control(const climate::ClimateCall &call) {
         }
     }
     uint32_t generation;
-    if (!valid || !transport_.enqueue(request, millis(), generation)) {
-        ESP_LOGW("hisense_ac", "Climate call rejected: invalid controls or full operation queue.");
+    if (!valid || request.fields == 0) {
+        ESP_LOGW("hisense_ac", "Climate call rejected: invalid or unsupported controls.");
+        operation_warning_ = true;
+        update_warning_();
+        return;
+    }
+    if (!transport_.enqueue(request, millis(), generation)) {
+        if (queue_rejections_ != UINT32_MAX) ++queue_rejections_;
+        ESP_LOGW("hisense_ac", "Climate call rejected: operation queue full.");
         operation_warning_ = true;
         update_warning_();
         return;
@@ -361,13 +393,11 @@ climate::ClimateTraits HisenseAC::traits() {
     traits.set_visual_min_temperature(temp_unit == FAHRENHEIT ? temperature::from_device(61, true) : 16);
     traits.set_visual_max_temperature(30);
     traits.set_visual_temperature_step(temp_unit == FAHRENHEIT ? 5.0f / 9.0f : 1.0f);
-    traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
-                               climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY});
-    traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
-                                     climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
+    traits.set_supported_modes(supported_modes_);
+    traits.set_supported_swing_modes(supported_swing_modes_);
     traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
                                    climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH, climate::CLIMATE_FAN_QUIET});
-    traits.set_supported_presets({climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_BOOST, climate::CLIMATE_PRESET_ECO});
+    traits.set_supported_presets(supported_presets_);
     return traits;
 }
 

@@ -69,8 +69,27 @@ void FrameParser::reset() {
 }
 
 void FrameParser::expire(uint32_t now) {
-    if (size_ != 0 && static_cast<uint32_t>(now - last_byte_at_) >= INTER_BYTE_TIMEOUT_MS)
+    if (size_ != 0 && static_cast<uint32_t>(now - last_byte_at_) >= INTER_BYTE_TIMEOUT_MS) {
+        if (size_ >= 2) reject_(ParseError::TIMEOUT);
         reset();
+    }
+}
+
+void FrameParser::reject_(ParseError error) {
+    if (invalid_frames_ != UINT32_MAX) ++invalid_frames_;
+    last_error_ = error;
+}
+
+const char *FrameParser::last_error_name() const {
+    switch (last_error_) {
+        case ParseError::HEADER: return "unsupported header";
+        case ParseError::LENGTH: return "invalid length";
+        case ParseError::ESCAPE: return "invalid escape";
+        case ParseError::FOOTER: return "invalid footer";
+        case ParseError::CHECKSUM: return "checksum mismatch";
+        case ParseError::TIMEOUT: return "partial frame timeout";
+        default: return "none";
+    }
 }
 
 void FrameParser::restart_(uint8_t byte) {
@@ -91,6 +110,7 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
     } else if (expected_size_ != 0 && size_ >= expected_size_ - 2) {
         const uint8_t expected = size_ == expected_size_ - 2 ? MARKER : FOOTER_END;
         if (byte != expected) {
+            reject_(ParseError::FOOTER);
             // A new header can overlap the rejected footer.
             const bool new_header = size_ == expected_size_ - 1 && byte == HEADER_END;
             restart_(byte);
@@ -104,6 +124,7 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
             if (size_ == expected_size_) {
                 const size_t complete_size = size_;
                 const bool valid = valid_frame(buffer_, complete_size);
+                if (!valid) reject_(ParseError::CHECKSUM);
                 reset();
                 return valid ? complete_size : 0;
             }
@@ -113,6 +134,7 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
         if (escape_pending_) {
             escape_pending_ = false;
             if (byte != MARKER) {
+                reject_(ParseError::ESCAPE);
                 restart_(byte);
                 if (byte == HEADER_END) {
                     buffer_[0] = MARKER;
@@ -128,15 +150,19 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
 
         if (decoded) {
             if (size_ >= MAX_FRAME_SIZE) {
+                reject_(ParseError::LENGTH);
                 restart_(byte);
             } else {
                 buffer_[size_++] = byte;
                 if ((size_ == 3 && byte != RESPONSE) || (size_ == 4 && byte != CONTROL)) {
+                    reject_(ParseError::HEADER);
                     restart_(byte);
                 } else if (size_ == 5) {
                     expected_size_ = static_cast<size_t>(byte) + ENVELOPE_SIZE;
-                    if (expected_size_ > MAX_FRAME_SIZE)
+                    if (expected_size_ > MAX_FRAME_SIZE) {
+                        reject_(ParseError::LENGTH);
                         restart_(byte);
+                    }
                 }
             }
         }
