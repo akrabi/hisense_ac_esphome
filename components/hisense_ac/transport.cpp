@@ -84,9 +84,6 @@ bool Engine::build_steps_() {
     step_ = step_count_ = 0;
     unverified_ = false;
     const auto &r = current_.request;
-    // Retain the existing transition limitation until the swing milestone.
-    if ((r.fields & SWING) && swing(status_) == 0 && (r.swing == 1 || r.swing == 2))
-        return false;
     Request mode_guard;
     if (r.fields & MODE) {
         mode_guard = field(MODE, r);

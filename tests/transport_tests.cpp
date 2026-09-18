@@ -25,7 +25,92 @@ void tick(transport::Engine &engine, uint32_t from, uint32_t to) {
     for (uint32_t now = from; now != to; ++now) engine.tick(now);
 }
 
+void swing_transitions() {
+    for (uint8_t before = 0; before < 4; ++before) {
+        for (uint8_t after = 0; after < 4; ++after) {
+            Host host;
+            transport::Engine engine(&host);
+            transport::Request request;
+            request.fields = transport::SWING;
+            request.swing = after;
+            uint32_t generation;
+            CHECK(engine.enqueue(request, 0, generation));
+            auto device = state();
+            device.left_right = (before & 1) != 0;
+            device.up_down = (before & 2) != 0;
+            size_t observed = 0;
+            unsigned controls = 0;
+            for (uint32_t now = 0; now < 3000; ++now) {
+                engine.tick(now);
+                while (observed < host.writes.size()) {
+                    const auto &packet = host.writes[observed++];
+                    if (packet[13] == 0x66) continue;
+                    ++controls;
+                    if (packet == Bytes(vert_swing, vert_swing + CMD_SIZE))
+                        device.up_down = !device.up_down;
+                    else {
+                        CHECK(packet == Bytes(hor_swing, hor_swing + CMD_SIZE));
+                        device.left_right = !device.left_right;
+                    }
+                }
+                if (now % 100 == 50) engine.receive(device, now);
+            }
+            const auto changed = before ^ after;
+            CHECK(controls == unsigned(bool(changed & 1)) + unsigned(bool(changed & 2)));
+            CHECK(device.left_right == bool(after & 1) && device.up_down == bool(after & 2));
+            CHECK(host.results.size() == 1 && host.results[0].second == transport::Result::CONFIRMED);
+        }
+    }
+
+    // Desired values are queued, not toggle counts based on an old UI state.
+    Host host;
+    transport::Engine engine(&host);
+    transport::Request desired;
+    desired.fields = transport::SWING;
+    desired.swing = 2;
+    uint32_t generation;
+    CHECK(engine.enqueue(desired, 0, generation));
+    desired.swing = 0;
+    CHECK(engine.enqueue(desired, 0, generation));
+    auto device = state();
+    size_t observed = 0;
+    unsigned controls = 0;
+    for (uint32_t now = 0; now < 3000; ++now) {
+        engine.tick(now);
+        while (observed < host.writes.size()) {
+            const auto &packet = host.writes[observed++];
+            if (packet[13] == 0x66) continue;
+            CHECK(packet == Bytes(vert_swing, vert_swing + CMD_SIZE));
+            ++controls;
+            device.up_down = !device.up_down;
+        }
+        if (now % 100 == 50) engine.receive(device, now);
+    }
+    CHECK(controls == 2 && !device.up_down);
+    CHECK(host.results.size() == 2 && host.results.back().second == transport::Result::CONFIRMED);
+
+    // A physical remote changing an axis between steps invalidates the guard.
+    Host remote;
+    transport::Engine guarded(&remote);
+    desired.swing = 3;
+    CHECK(guarded.enqueue(desired, 0, generation));
+    guarded.tick(0);
+    guarded.receive(state(), 100);
+    guarded.tick(100);
+    tick(guarded, 101, 700);
+    auto vertical = state();
+    vertical.up_down = true;
+    guarded.receive(vertical, 700);
+    guarded.receive(state(), 701);
+    guarded.tick(701);
+    CHECK(remote.results.back().second == transport::Result::PREREQUISITE);
+    controls = 0;
+    for (const auto &packet : remote.writes) controls += packet[13] == 0x65;
+    CHECK(controls == 1);
+}
+
 int main() {
+    swing_transitions();
     transport::Request temp;
     temp.fields = transport::TEMPERATURE; temp.temperature = 23;
     uint32_t generation;
