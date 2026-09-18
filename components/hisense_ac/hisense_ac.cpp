@@ -170,41 +170,40 @@ void HisenseAC::setup()
 
 void HisenseAC::loop()
 {
-    int msg_size = 0;
+    parser_.expire(millis());
     while (this->available())
     {
-        msg_size = get_response(this->read(), uart_buf);
-        if (msg_size > 0)
+        if (get_response(this->read()))
         {
             ESP_LOGD(
                 "hisense_ac",
                 "compf: %d compf_set: %d compf_snd: %d",
-                ((Device_Status*)uart_buf)->compressor_frequency,
-                ((Device_Status*)uart_buf)->compressor_frequency_setting,
-                ((Device_Status*)uart_buf)->compressor_frequency_send);
+                status_.compressor_frequency,
+                status_.compressor_frequency_setting,
+                status_.compressor_frequency_send);
 
             ESP_LOGD(
                 "hisense_ac",
                 "out_temp: %d out_cond_temp: %d comp_exh_temp: %d comp_exh_temp_tgt: %d",
-                ((Device_Status*)uart_buf)->outdoor_temperature,
-                ((Device_Status*)uart_buf)->outdoor_condenser_temperature,
-                ((Device_Status*)uart_buf)->compressor_exhaust_temperature,
-                ((Device_Status*)uart_buf)->target_exhaust_temperature);
+                status_.outdoor_temperature,
+                status_.outdoor_condenser_temperature,
+                status_.compressor_exhaust_temperature,
+                status_.target_exhaust_temperature);
 
             ESP_LOGD(
                 "hisense_ac",
                 "indoor_pipe_temp %d",
-                ((Device_Status*)uart_buf)->indoor_pipe_temperature);
+                status_.indoor_pipe_temperature);
 
             ESP_LOGD(
                 "hisense_ac",
                 "indor_humid_set: %d indoor_humid: %d",
-                ((Device_Status*)uart_buf)->indoor_humidity_setting,
-                ((Device_Status*)uart_buf)->indoor_humidity_status);
+                status_.indoor_humidity_setting,
+                status_.indoor_humidity_status);
 
             // Convert temperatures to celsius
-            float tgt_temp = ((Device_Status*)uart_buf)->indoor_temperature_setting;
-            float curr_temp = ((Device_Status*)uart_buf)->indoor_temperature_status;
+            float tgt_temp = status_.indoor_temperature_setting;
+            float curr_temp = status_.indoor_temperature_status;
             
             if (this->temp_unit == Temperature_Unit::CELSIUS && tgt_temp > 7 && tgt_temp < 33 ||
                 this->temp_unit == Temperature_Unit::FAHRENHEIT && tgt_temp > 45 && tgt_temp < 91)
@@ -221,31 +220,31 @@ void HisenseAC::loop()
 
             // See if the system is actively running
             bool comp_running = false;
-            if (((Device_Status*)uart_buf)->compressor_frequency > 0)
+            if (status_.compressor_frequency > 0)
             {
                 comp_running = true;
             }
 
-            if (((Device_Status*)uart_buf)->left_right && ((Device_Status*)uart_buf)->up_down)
+            if (status_.left_right && status_.up_down)
                 swing_mode = climate::CLIMATE_SWING_BOTH;
-            else if (((Device_Status*)uart_buf)->left_right)
+            else if (status_.left_right)
                 swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-            else if (((Device_Status*)uart_buf)->up_down)
+            else if (status_.up_down)
                 swing_mode = climate::CLIMATE_SWING_VERTICAL;
             else
                 swing_mode = climate::CLIMATE_SWING_OFF;
 
-            if (((Device_Status*)uart_buf)->run_status == 0)
+            if (status_.run_status == 0)
             {
                 mode = climate::CLIMATE_MODE_OFF;
                 action = climate::CLIMATE_ACTION_OFF;
             }
-            else if (((Device_Status*)uart_buf)->mode_status == 0)
+            else if (status_.mode_status == 0)
             {
                 mode = climate::CLIMATE_MODE_FAN_ONLY;
                 action = climate::CLIMATE_ACTION_FAN;
             }
-            else if (((Device_Status*)uart_buf)->mode_status == 1)
+            else if (status_.mode_status == 1)
             {
                 mode = climate::CLIMATE_MODE_HEAT;
                 if (comp_running)
@@ -257,7 +256,7 @@ void HisenseAC::loop()
                     action = climate::CLIMATE_ACTION_IDLE;
                 }
             }
-            else if (((Device_Status*)uart_buf)->mode_status == 2)
+            else if (status_.mode_status == 2)
             {
                 mode = climate::CLIMATE_MODE_COOL;
                 if (comp_running)
@@ -269,7 +268,7 @@ void HisenseAC::loop()
                     action = climate::CLIMATE_ACTION_IDLE;
                 }
             }
-            else if (((Device_Status*)uart_buf)->mode_status == 3)
+            else if (status_.mode_status == 3)
             {
                 mode = climate::CLIMATE_MODE_DRY;
                 if (comp_running)
@@ -282,23 +281,23 @@ void HisenseAC::loop()
                 }
             }
 
-            if (((Device_Status*)uart_buf)->wind_status == 18)
+            if (status_.wind_status == 18)
             {
                 fan_mode = climate::CLIMATE_FAN_HIGH;
             }
-            else if (((Device_Status*)uart_buf)->wind_status == 14)
+            else if (status_.wind_status == 14)
             {
                 fan_mode = climate::CLIMATE_FAN_MEDIUM;
             }
-            else if (((Device_Status*)uart_buf)->wind_status == 10)
+            else if (status_.wind_status == 10)
             {
                 fan_mode = climate::CLIMATE_FAN_LOW;
             }
-            else if (((Device_Status*)uart_buf)->wind_status == 2)
+            else if (status_.wind_status == 2)
             {
                 fan_mode = climate::CLIMATE_FAN_QUIET;
             }
-            else if (((Device_Status*)uart_buf)->wind_status == 0)
+            else if (status_.wind_status == 0)
             {
                 fan_mode = climate::CLIMATE_FAN_AUTO;
             }
@@ -309,7 +308,7 @@ void HisenseAC::loop()
                 // display_on/off changes status byte 37 (zero-based) between
                 // 0x80 and 0x00 (back_led); display_led (0x40) remains clear.
                 // Other indoor-unit variants have not been verified.
-                bool display_state = ((Device_Status*)uart_buf)->back_led;
+                bool display_state = status_.back_led;
                 bool accept_display_state = true;
 
                 if (display_state_pending_)
@@ -359,16 +358,16 @@ void HisenseAC::update()
     this->publish_state();
 
     // Update sensors
-    set_sensor(compressor_frequency, ((Device_Status*)uart_buf)->compressor_frequency);
-    set_sensor(compressor_frequency_setting, ((Device_Status*)uart_buf)->compressor_frequency_setting);
-    set_sensor(compressor_frequency_send, ((Device_Status*)uart_buf)->compressor_frequency_send);
-    set_sensor(outdoor_temperature, ((Device_Status*)uart_buf)->outdoor_temperature);
-    set_sensor(outdoor_condenser_temperature, ((Device_Status*)uart_buf)->outdoor_condenser_temperature);
-    set_sensor(compressor_exhaust_temperature, ((Device_Status*)uart_buf)->compressor_exhaust_temperature);
-    set_sensor(target_exhaust_temperature, ((Device_Status*)uart_buf)->target_exhaust_temperature);
-    set_sensor(indoor_pipe_temperature, ((Device_Status*)uart_buf)->indoor_pipe_temperature);
-    set_sensor(indoor_humidity_setting, ((Device_Status*)uart_buf)->indoor_humidity_setting);
-    set_sensor(indoor_humidity_status, ((Device_Status*)uart_buf)->indoor_humidity_status);
+    set_sensor(compressor_frequency, status_.compressor_frequency);
+    set_sensor(compressor_frequency_setting, status_.compressor_frequency_setting);
+    set_sensor(compressor_frequency_send, status_.compressor_frequency_send);
+    set_sensor(outdoor_temperature, status_.outdoor_temperature);
+    set_sensor(outdoor_condenser_temperature, status_.outdoor_condenser_temperature);
+    set_sensor(compressor_exhaust_temperature, status_.compressor_exhaust_temperature);
+    set_sensor(target_exhaust_temperature, status_.target_exhaust_temperature);
+    set_sensor(indoor_pipe_temperature, status_.indoor_pipe_temperature);
+    set_sensor(indoor_humidity_setting, status_.indoor_humidity_setting);
+    set_sensor(indoor_humidity_status, status_.indoor_humidity_status);
     save_target_temperture();
 }
 
@@ -596,124 +595,20 @@ climate::ClimateTraits HisenseAC::traits()
 
 
 
-// Handle bytes form the UART to build a complete message
-int HisenseAC::get_response(const uint8_t input, uint8_t *out)
+bool HisenseAC::get_response(uint8_t input)
 {
-    static char buf[UART_BUF_SIZE] = {0};
-    static int buf_idx = 0;
-    static int msg_size = 0;
-    static uint16_t checksum = 0;
-    static bool f4_detect = false;
-    bool reset = false;
-
-    // Put the byte in the buffer
-    if (!f4_detect)
-        buf[buf_idx++] = input;
-    else
-        f4_detect = false;
-
-    // The checksum is computed from byte index 2 to msg_size - 4
-    if ((buf_idx > 2 && buf_idx < 6) || (buf_idx < msg_size - 4))
+    const size_t size = parser_.feed(input, millis());
+    if (size == 0)
+        return false;
+    if (!protocol::decode_status(parser_.data(), size, status_))
     {
-        checksum += buf[buf_idx - 1];
+        ESP_LOGD("hisense_ac", "Ignoring unsupported response (%u bytes).", static_cast<unsigned>(size));
+        return false;
     }
-
-    // Make sure we don't ever overflow the buffer
-    if (buf_idx >= UART_BUF_SIZE) 
-    {
-        reset = true;
-    }
-    else if (buf_idx == 1) // Search for frame start byte 1
-    {
-        if (input != 0xF4)
-        {
-            reset = true;
-        }
-    }
-    else if (buf_idx == 2) // Search for frame start byte 2
-    {
-        if (input != 0xF5)
-        {
-            reset = true;
-        }
-    }
-    else if (buf_idx == 3) // Search for message mode byte (1 = repsonse)
-    {
-        if (input != 0x01)
-        {
-            reset = true;
-        }
-    }
-    else if (buf_idx == 4) // Search for message type (we only handle 0x40)
-    {
-        if (input != 0x40)
-        {
-            reset = true;
-        }
-    }
-    else if (buf_idx == 5) // get message size
-    {
-        msg_size = input + 9; // add header and footer bytes + this byte
-    }
-    else if (buf_idx == msg_size - 2) // third to last byte (end of checksum)
-    {
-        uint16_t rxd_checksum = buf[msg_size - 4];
-        rxd_checksum = rxd_checksum << 8;
-        rxd_checksum |= buf[msg_size - 3];
-        if (rxd_checksum != checksum)
-        {
-            ESP_LOGE(
-                "hisense_ac",
-                "CRC check failed. Computed: %d Received: %d",
-                checksum,
-                rxd_checksum);
-            reset = true;
-        }
-    }
-    else if (buf_idx == msg_size - 1) // second to last byte
-    {
-        if (input != 0xF4)
-        {
-            reset = true;
-        }
-    }
-    else if (buf_idx == msg_size) // last byte
-    {
-        if (input != 0xFB)
-        {
-            reset = true;
-        }
-        else
-        {
-            int msg_size_cpy = msg_size;
-            ESP_LOGD(
-                "hisense_ac",
-                "Received %d bytes.",
-                msg_size);
-            memcpy(out, buf, msg_size);
-            buf_idx = 0;
-            msg_size = 0;
-            checksum = 0;     
-            wait_for_rx = false;              
-            return msg_size_cpy;
-        }
-    }
-    else if (!f4_detect && input == 0xF4)
-    {
-        f4_detect = true;
-    }
-
-    // Reset the static variables if we failed any of the conditions.
-    if (reset)
-    {
-        ESP_LOGD("hisense_ac", "Resetting RX buffer.");
-        buf_idx = 0;
-        msg_size = 0;
-        checksum = 0;
-        wait_for_rx = false;       
-    }
-
-    return 0;
+    // Preserves existing pacing for recognized status responses. This does not
+    // prove command execution; transaction correlation is not yet implemented.
+    wait_for_rx = false;
+    return true;
 }
 
 // This function buffers messages to be sent to the AC.

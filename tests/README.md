@@ -25,10 +25,24 @@ because this standalone SDK lacks `mt.exe`; this affects host tests only.
 `fixtures/commands.json` is an independent snapshot of every `commands.cpp` array
 before refactoring. Do not regenerate it from modified production code. Native
 tests link the actual production arrays and compare every byte (including the
-51-byte 16 C command). The initial parser characterization compiles the method
-extracted from production with only logging removed; it records malformed-input
-acknowledgment and cross-instance state defects, not desired behavior. It is
-replaced by desired-behavior tests when the parser is hardened.
+51-byte 16 C command). Native parser tests compile production `protocol.cpp`,
+both with signed and unsigned plain `char`. The RX-adapter test extracts the
+actual `HisenseAC::get_response()` method, replacing only its class shell,
+ESPHome logging, and clock. It proves malformed/unknown frames cannot release a
+pending response or overwrite the retained snapshot.
+
+Coverage includes every capture fragmentation/truncation position, concatenated
+packets, header overlap, noise, payload/checksum stuffing, high-bit data, checksum
+and footer errors, every in-capacity length, all oversized length bytes, full
+capacity with stuffing, timeout boundaries and clock rollover, interleaved
+instances, explicit signed decoding, all mode/swing/display masks, and 100,000
+deterministic noise bytes. These replace the foundation commit's known-bug
+characterization tests.
+
+GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
+and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
+19.12 host toolchain does not support these sanitizers, so local Windows tests
+run without them. See [protocol evidence and API](../doc/protocol.md).
 
 Generated response examples are **synthetic**, not hardware captures.
 `fixtures/status_82.hex` is the single sanitized RX frame at `08:57:01.087` in
