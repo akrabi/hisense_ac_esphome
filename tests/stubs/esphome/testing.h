@@ -5,6 +5,7 @@
 #include <deque>
 #include <initializer_list>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #define ESP_LOGD(...) ((void)0)
@@ -41,6 +42,15 @@ public:
     bool has_state() const { return !publications.empty(); }
     float get_raw_state() const { return publications.back(); }
     void publish_state(float value) { publications.push_back(value); }
+};
+}
+namespace binary_sensor {
+class BinarySensor {
+public:
+    std::vector<bool> publications;
+    bool state{false};
+    bool has_state() const { return !publications.empty(); }
+    void publish_state(bool value) { state = value; publications.push_back(value); }
 };
 }
 namespace switch_ {
@@ -81,6 +91,9 @@ enum ClimateFanMode { CLIMATE_FAN_AUTO, CLIMATE_FAN_QUIET, CLIMATE_FAN_LOW, CLIM
 enum ClimateSwingMode { CLIMATE_SWING_OFF, CLIMATE_SWING_HORIZONTAL, CLIMATE_SWING_VERTICAL, CLIMATE_SWING_BOTH };
 enum ClimatePreset { CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST, CLIMATE_PRESET_ECO };
 enum ClimateAction { CLIMATE_ACTION_OFF, CLIMATE_ACTION_IDLE, CLIMATE_ACTION_FAN, CLIMATE_ACTION_COOLING, CLIMATE_ACTION_HEATING, CLIMATE_ACTION_DRYING };
+using ClimateModeMask = std::set<ClimateMode>;
+using ClimateSwingModeMask = std::set<ClimateSwingMode>;
+using ClimatePresetMask = std::set<ClimatePreset>;
 constexpr int CLIMATE_SUPPORTS_CURRENT_TEMPERATURE = 1, CLIMATE_SUPPORTS_ACTION = 2;
 class ClimateCall {
 public:
@@ -101,10 +114,16 @@ public:
     void set_visual_min_temperature(float) {}
     void set_visual_max_temperature(float) {}
     void set_visual_temperature_step(float) {}
-    void set_supported_modes(std::initializer_list<ClimateMode>) {}
+    void set_supported_modes(ClimateModeMask values) { modes = values; }
     void set_supported_fan_modes(std::initializer_list<ClimateFanMode>) {}
-    void set_supported_swing_modes(std::initializer_list<ClimateSwingMode>) {}
-    void set_supported_presets(std::initializer_list<ClimatePreset>) {}
+    void set_supported_swing_modes(ClimateSwingModeMask values) { swings = values; }
+    void set_supported_presets(ClimatePresetMask values) { presets = values; }
+    bool supports_mode(ClimateMode value) const { return modes.count(value); }
+    bool supports_swing_mode(ClimateSwingMode value) const { return swings.count(value); }
+    bool supports_preset(ClimatePreset value) const { return presets.count(value); }
+    ClimateModeMask modes;
+    ClimateSwingModeMask swings;
+    ClimatePresetMask presets;
 };
 struct Publication {
     ClimateMode mode;

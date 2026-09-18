@@ -137,6 +137,48 @@ steps. The component does not change the AC's own display-unit setting.
 The display status bit is verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 only.
 Do not infer support on another model from the switch being configurable.
 
+## Optional diagnostics and capabilities
+
+Add these under the `hisense_ac` climate entry to expose diagnostic entities:
+
+```yaml
+communication_connected:
+  name: "AC Communication"
+last_status_age:
+  name: "AC Last Status Age"
+invalid_frame_count:
+  name: "AC Invalid Frames"
+response_timeout_count:
+  name: "AC Response Timeouts"
+queue_rejection_count:
+  name: "AC Queue Rejections"
+```
+
+Communication is false before the first valid report, after a failed standalone
+status transaction, or when no status arrives for three polling intervals
+(at least 10 seconds). It recovers on a valid status, independently of warnings
+about unconfirmed controls. Status age is seconds since the last valid report
+and remains unknown until one arrives. Counters reset on reboot: invalid frames
+count malformed framed candidates and partial-frame timeouts, response timeouts
+count unanswered status transactions, and queue rejections count operations
+refused for lack of capacity (not invalid user controls). A valid but unsupported
+status layout is logged and ignored, not counted as a checksum error.
+
+Limit advertised controls for a unit with fewer capabilities:
+
+```yaml
+supported_modes: ["OFF", COOL, DRY, FAN_ONLY]
+supported_swing_modes: ["OFF", VERTICAL]
+supported_presets: []
+```
+
+Defaults advertise all existing component capabilities. Mode subsets must
+include `"OFF"`; swing and preset lists may be empty. These are restrictions,
+not automatic detection or support for new protocol variants. Disabled controls
+are rejected even when invoked directly through an automation.
+Named hardware faults and confirmed preset feedback remain unexposed until
+their bit meanings and model applicability are verified.
+
 # Example ESP32 Setup
 
 ```yaml

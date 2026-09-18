@@ -5,6 +5,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/components/climate/climate.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/uart/uart.h"
 #include "protocol.h"
@@ -26,6 +27,14 @@ public:
     
     void set_temperature_unit(Temperature_Unit unit);
     void set_optimistic(bool optimistic) { optimistic_ = optimistic; }
+    void set_supported_modes(climate::ClimateModeMask modes) { supported_modes_ = modes; }
+    void set_supported_swing_modes(climate::ClimateSwingModeMask modes) { supported_swing_modes_ = modes; }
+    void set_supported_presets(climate::ClimatePresetMask presets) { supported_presets_ = presets; }
+    void set_communication_connected(binary_sensor::BinarySensor *sensor) { communication_connected_ = sensor; }
+    void set_last_status_age(sensor::Sensor *sensor) { last_status_age_ = sensor; }
+    void set_invalid_frame_count(sensor::Sensor *sensor) { invalid_frame_count_ = sensor; }
+    void set_response_timeout_count(sensor::Sensor *sensor) { response_timeout_count_ = sensor; }
+    void set_queue_rejection_count(sensor::Sensor *sensor) { queue_rejection_count_ = sensor; }
     void set_compressor_frequency(sensor::Sensor *sensor);
     void set_compressor_frequency_setting(sensor::Sensor *sensor);
     void set_compressor_frequency_send(sensor::Sensor *sensor);
@@ -81,6 +90,22 @@ private:
     uint32_t unknown_warning_at_{0};
     bool has_unknown_warning_{false};
     switch_::Switch *display_switch_{nullptr};
+    climate::ClimateModeMask supported_modes_{climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
+        climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY};
+    climate::ClimateSwingModeMask supported_swing_modes_{climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
+        climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL};
+    climate::ClimatePresetMask supported_presets_{climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_BOOST,
+        climate::CLIMATE_PRESET_ECO};
+    binary_sensor::BinarySensor *communication_connected_{nullptr};
+    sensor::Sensor *last_status_age_{nullptr};
+    sensor::Sensor *invalid_frame_count_{nullptr};
+    sensor::Sensor *response_timeout_count_{nullptr};
+    sensor::Sensor *queue_rejection_count_{nullptr};
+    uint32_t response_timeouts_{0};
+    uint32_t queue_rejections_{0};
+    uint32_t reported_frame_errors_{0};
+    uint32_t frame_error_log_at_{0};
+    bool has_frame_error_log_{false};
 
     bool get_response(uint8_t input);
     bool send_packet(const uint8_t *data, size_t size) override;
@@ -88,6 +113,7 @@ private:
     void apply_status_();
     void publish_presentation_();
     void update_warning_();
+    void publish_diagnostics_();
     void accepted_(const transport::Request &request, uint32_t generation);
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);

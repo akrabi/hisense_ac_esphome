@@ -36,11 +36,16 @@ def test_configuration_codegen(fixture):
         assert "set_display_switch(" in generated
         assert "hisense_ac::FAHRENHEIT" in generated
         code = "\n".join(line.split("//", 1)[0] for line in generated.splitlines())
-        assert code.count("->set_state_class(sensor::STATE_CLASS_MEASUREMENT);") == 10
-        assert code.count("->set_accuracy_decimals(0);") == 10
+        assert code.count("->set_state_class(sensor::STATE_CLASS_MEASUREMENT);") == 11
+        assert code.count("->set_accuracy_decimals(0);") == 14
+        assert code.count("->set_state_class(sensor::STATE_CLASS_TOTAL_INCREASING);") == 3
         for device_class in ("frequency", "temperature", "humidity"):
             assert f'PROGMEM = "{device_class}";' in code
         assert '"Hz"' in code and '"%"' in code and r'"\302\260C"' in code
+        for key in ("communication_connected", "last_status_age", "invalid_frame_count",
+                    "response_timeout_count", "queue_rejection_count",
+                    "supported_modes", "supported_swing_modes", "supported_presets"):
+            assert f"ac->set_{key}(" in code
 
 
 @pytest.mark.parametrize("unit,visual,valid", [
@@ -93,3 +98,27 @@ def test_metadata_overrides(tmp_path):
     # Only a unit index is set; the low-byte device-class index is zero.
     registration = re.search(r'App\.register_sensor\(custom_sensor,.*?,\s*(\d+)\);', code)
     assert registration and int(registration.group(1)) & 0xFF == 0
+
+
+@pytest.mark.parametrize("key,value,valid", [
+    ("supported_modes", ["OFF", "COOL"], True),
+    ("supported_modes", ["OFF"], True),
+    ("supported_modes", ["COOL"], False),
+    ("supported_modes", ["OFF", "AUTO"], False),
+    ("supported_swing_modes", ["OFF", "VERTICAL"], True),
+    ("supported_swing_modes", ["DIAGONAL"], False),
+    ("supported_presets", [], True),
+    ("supported_presets", ["ECO"], True),
+    ("supported_presets", ["SLEEP"], False),
+])
+def test_capability_subsets(tmp_path, key, value, valid):
+    config = yaml.safe_load((ROOT / "tests" / "minimal.yaml").read_text())
+    config["external_components"][0]["source"]["path"] = str(ROOT / "components")
+    config["climate"][0][key] = value
+    path = tmp_path / "capabilities.yaml"
+    path.write_text(yaml.safe_dump(config))
+    result = subprocess.run(
+        [sys.executable, "-m", "esphome", "config", str(path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert (result.returncode == 0) == valid, result.stdout + result.stderr

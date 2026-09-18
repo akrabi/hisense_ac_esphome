@@ -13,6 +13,7 @@ constexpr size_t STATUS_FRAME_SIZE = 82;
 constexpr size_t EXTENDED_STATUS_FRAME_SIZE = 160;
 // Software recovery threshold, not a hardware-verified bus timing constraint.
 constexpr uint32_t INTER_BYTE_TIMEOUT_MS = 100;
+enum class ParseError { NONE, HEADER, LENGTH, ESCAPE, FOOTER, CHECKSUM, TIMEOUT };
 
 class FrameParser {
 public:
@@ -22,14 +23,19 @@ public:
     const uint8_t *data() const { return buffer_; }
     void reset();
     void expire(uint32_t now);
+    uint32_t invalid_frames() const { return invalid_frames_; }
+    const char *last_error_name() const;
 
 private:
     void restart_(uint8_t byte);
+    void reject_(ParseError error);
     uint8_t buffer_[MAX_FRAME_SIZE]{};
     size_t size_{0};
     size_t expected_size_{0};
     bool escape_pending_{false};
     uint32_t last_byte_at_{0};
+    uint32_t invalid_frames_{0};
+    ParseError last_error_{ParseError::NONE};
 };
 
 // Validates the envelope, checksum, class and evidenced 82/160-byte layouts.

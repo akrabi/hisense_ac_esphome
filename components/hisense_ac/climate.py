@@ -4,7 +4,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.core import CORE, ID
-from esphome.components import climate, uart, sensor, switch
+from esphome.components import binary_sensor, climate, uart, sensor, switch
 from esphome.const import (
     CONF_ID,
     CONF_VISUAL,
@@ -19,10 +19,18 @@ from esphome.const import (
     UNIT_HERTZ,
     UNIT_PERCENT,
     STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
+    DEVICE_CLASS_CONNECTIVITY,
+    DEVICE_CLASS_DURATION,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    UNIT_SECOND,
+    CONF_SUPPORTED_MODES,
+    CONF_SUPPORTED_SWING_MODES,
+    CONF_SUPPORTED_PRESETS,
 )
 
 DEPENDENCIES = ['uart']
-AUTO_LOAD = ['sensor', 'switch']
+AUTO_LOAD = ['sensor', 'switch', 'binary_sensor']
 
 hisense_ac_ns = cg.esphome_ns.namespace('hisense_ac')
 HisenseAC = hisense_ac_ns.class_('HisenseAC', climate.Climate, cg.PollingComponent, uart.UARTDevice)
@@ -48,6 +56,21 @@ CONF_INDOOR_HUMIDITY_SETTING = 'indoor_humidity_setting'
 CONF_INDOOR_HUMIDITY_STATUS = 'indoor_humidity_status'
 CONF_DISPLAY = 'display'
 CONF_OPTIMISTIC = 'optimistic'
+CONF_COMMUNICATION_CONNECTED = 'communication_connected'
+CONF_LAST_STATUS_AGE = 'last_status_age'
+CONF_INVALID_FRAME_COUNT = 'invalid_frame_count'
+CONF_RESPONSE_TIMEOUT_COUNT = 'response_timeout_count'
+CONF_QUEUE_REJECTION_COUNT = 'queue_rejection_count'
+
+SUPPORTED_MODES = {key: climate.CLIMATE_MODES[key] for key in ("OFF", "COOL", "HEAT", "DRY", "FAN_ONLY")}
+SUPPORTED_SWING_MODES = {key: climate.CLIMATE_SWING_MODES[key] for key in ("OFF", "VERTICAL", "HORIZONTAL", "BOTH")}
+SUPPORTED_PRESETS = {key: climate.CLIMATE_PRESETS[key] for key in ("NONE", "BOOST", "ECO")}
+
+
+def validate_modes(value):
+    if "OFF" not in value:
+        raise cv.Invalid("supported_modes must include OFF")
+    return value
 
 FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_HERTZ, device_class=DEVICE_CLASS_FREQUENCY,
@@ -60,6 +83,10 @@ TEMPERATURE_SENSOR_SCHEMA = sensor.sensor_schema(
 HUMIDITY_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_PERCENT, device_class=DEVICE_CLASS_HUMIDITY,
     accuracy_decimals=0, state_class=STATE_CLASS_MEASUREMENT,
+)
+COUNTER_SENSOR_SCHEMA = sensor.sensor_schema(
+    accuracy_decimals=0, state_class=STATE_CLASS_TOTAL_INCREASING,
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
 )
 
 
@@ -89,6 +116,20 @@ CONFIG_SCHEMA = cv.All(climate.climate_schema(HisenseAC).extend({
     cv.GenerateID(): cv.declare_id(HisenseAC),
     cv.Optional(CONF_TEMP_UNIT, default='CELSIUS'): cv.enum(TEMP_UNITS, upper=True),
     cv.Optional(CONF_OPTIMISTIC, default=False): cv.boolean,
+    cv.Optional(CONF_SUPPORTED_MODES): cv.All(cv.ensure_list(cv.enum(SUPPORTED_MODES, upper=True)), validate_modes),
+    cv.Optional(CONF_SUPPORTED_SWING_MODES): cv.ensure_list(cv.enum(SUPPORTED_SWING_MODES, upper=True)),
+    cv.Optional(CONF_SUPPORTED_PRESETS): cv.ensure_list(cv.enum(SUPPORTED_PRESETS, upper=True)),
+    cv.Optional(CONF_COMMUNICATION_CONNECTED): binary_sensor.binary_sensor_schema(
+        device_class=DEVICE_CLASS_CONNECTIVITY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    cv.Optional(CONF_LAST_STATUS_AGE): sensor.sensor_schema(
+        unit_of_measurement=UNIT_SECOND, device_class=DEVICE_CLASS_DURATION,
+        accuracy_decimals=0, state_class=STATE_CLASS_MEASUREMENT,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    cv.Optional(CONF_INVALID_FRAME_COUNT): COUNTER_SENSOR_SCHEMA,
+    cv.Optional(CONF_RESPONSE_TIMEOUT_COUNT): COUNTER_SENSOR_SCHEMA,
+    cv.Optional(CONF_QUEUE_REJECTION_COUNT): COUNTER_SENSOR_SCHEMA,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY): FREQUENCY_SENSOR_SCHEMA,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY_SETTING): FREQUENCY_SENSOR_SCHEMA,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY_SEND): FREQUENCY_SENSOR_SCHEMA,
@@ -156,6 +197,12 @@ async def to_code(config):
     # Initialize temperature unit
     cg.add(var.set_temperature_unit(config[CONF_TEMP_UNIT]))
     cg.add(var.set_optimistic(config[CONF_OPTIMISTIC]))
+    for key in (CONF_SUPPORTED_MODES, CONF_SUPPORTED_SWING_MODES, CONF_SUPPORTED_PRESETS):
+        if key in config:
+            cg.add(getattr(var, f"set_{key}")(config[key]))
+    if CONF_COMMUNICATION_CONNECTED in config:
+        connected = await binary_sensor.new_binary_sensor(config[CONF_COMMUNICATION_CONNECTED])
+        cg.add(var.set_communication_connected(connected))
 
     # Setup sensors
     for key in (
@@ -164,6 +211,7 @@ async def to_code(config):
         CONF_OUTDOOR_CONDENSER_TEMPERATURE, CONF_COMPRESSOR_EXHAUST_TEMPERATURE,
         CONF_TARGET_EXHAUST_TEMPERATURE, CONF_INDOOR_PIPE_TEMPERATURE,
         CONF_INDOOR_HUMIDITY_SETTING, CONF_INDOOR_HUMIDITY_STATUS,
+        CONF_LAST_STATUS_AGE, CONF_INVALID_FRAME_COUNT, CONF_RESPONSE_TIMEOUT_COUNT, CONF_QUEUE_REJECTION_COUNT,
     ):
         await setup_sensor(config, key, var)
 
