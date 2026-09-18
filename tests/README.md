@@ -1,8 +1,15 @@
 # Regression tests
 
-Install `requirements-dev.txt` into a virtual environment. Both YAML fixtures are
-credential-free, use the local component and ESP32 Arduino, and require no Wi-Fi.
+Install `requirements-dev.txt` into a virtual environment. The firmware fixtures
+are credential-free, use the local component, and require no Wi-Fi.
 Never substitute personal configurations or run `upload`/`run` for these tests.
+
+| Configuration | Coverage |
+| --- | --- |
+| `minimal.yaml` | ESP32 Arduino, Celsius, device-reported defaults |
+| `full.yaml` | ESP32 Arduino, Fahrenheit, optimism, all sensors/diagnostics |
+| `idf.yaml` | Full configuration on ESP-IDF without Arduino |
+| `two_instances.yaml` | Independent UARTs/components with both unit settings |
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -11,6 +18,9 @@ Never substitute personal configurations or run `upload`/`run` for these tests.
 .venv\Scripts\cmake.exe --build .build\native
 .venv\Scripts\ctest.exe --test-dir .build\native --output-on-failure
 .venv\Scripts\python.exe -m esphome compile tests\minimal.yaml
+.venv\Scripts\python.exe -m esphome compile tests\full.yaml
+.venv\Scripts\python.exe -m esphome compile tests\idf.yaml
+.venv\Scripts\python.exe -m esphome compile tests\two_instances.yaml
 ```
 
 Select an installed native compiler using CMake's standard generator/toolchain
@@ -24,12 +34,12 @@ because this standalone SDK lacks `mt.exe`; this affects host tests only.
 
 `fixtures/commands.json` is an independent snapshot of every `commands.cpp` array
 before refactoring. Do not regenerate it from modified production code. Native
-tests link the actual production arrays and compare every byte (including the
-51-byte 16 C command). Native parser tests compile production `protocol.cpp`,
-both with signed and unsigned plain `char`. The RX-adapter test extracts the
-actual `HisenseAC::get_response()` method, replacing only its class shell,
-ESPHome logging, and clock. It proves malformed/unknown frames cannot release a
-pending response or overwrite the retained snapshot.
+tests link remaining production arrays and the replacement temperature encoder,
+comparing every byte (including the 51-byte 16 C command). Native parser tests
+compile production `protocol.cpp` with signed and unsigned plain `char`.
+Integration tests compile actual `hisense_ac.cpp` and `transport.cpp` with small
+ESPHome UART, clock and entity stubs. They exercise the complete component
+control/loop/publication path, not a second implementation of that behavior.
 
 Coverage includes every capture fragmentation/truncation position, concatenated
 packets, header overlap, noise, payload/checksum stuffing, high-bit data, checksum
@@ -44,6 +54,15 @@ payload bytes at lengths 82, 160 and 264 must participate in the checksum;
 checksums calculated using the historical off-by-one boundary are rejected.
 The larger bound also permits a valid escaped high checksum byte, which is
 explicitly covered.
+
+Transport/component coverage includes queue acceptance and exhaustion, safe
+coalescing, response timing, prerequisite failures, all 16 swing transitions,
+rapid reversals, physical-remote changes, missing/stale responses, independent
+instances, clock rollover, optimistic generations/expiry, Celsius/Fahrenheit
+quantization and remembered setpoints. Diagnostics are exercised through the
+actual component; unknown startup readings remain unpublished. Python tests
+validate metadata defaults/overrides, capability restrictions, unsafe UART
+configurations, visual limits, and documentation examples with dummy secrets.
 
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
@@ -81,6 +100,16 @@ shared-prefix decoder. Support for these receive layouts does not establish
 model-specific capabilities or the meanings of the opaque extended tail.
 
 Other frame classes, status variants, unused wire flags, and acknowledgment
-correlation require separate evidence. State publication and swing transition
-regressions belong to the subsequent state/transport milestones; this harness
-does not yet emulate ESPHome's entire climate runtime.
+correlation require separate evidence. The stubs do not emulate the physical
+UART driver or Home Assistant. Firmware compilation verifies the actual ESPHome
+API surface; it is not a hardware test or a measured callback-latency guarantee.
+
+## Hardware acceptance (manual, not run by these tests)
+
+Record the ESPHome version, AC model/module and firmware revision. Confirm normal
+mode, setpoint, fan, swing and display controls; verify both device-reported and
+optimistic presentation, changes made by the physical remote, rapid requests,
+and AC disconnect/reconnect without replaying expired controls. Check UART-write
+latency warnings and Home Assistant responsiveness during bursts and silence.
+Capture packet-only evidence before adding model-specific fields or fault bits.
+Do not mark an untested model supported solely because its packet parses.

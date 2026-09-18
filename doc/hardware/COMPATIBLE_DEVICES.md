@@ -10,6 +10,19 @@ This document lists the Hisense AC models that have been tested and confirmed to
 | Hisense AST-12UW4RVETG00A | AEH-W4E1 |
 | ACOND ASTI-09UW4RVEDC00 | AEH-W4B1 |
 
+These are existing community-reported compatibility entries, not a claim that
+every subsequent firmware change has been retested on each unit. Display
+feedback via status byte 37 bit `0x80` is verified only for the listed ACOND
+model/module.
+
+The parser also has public packet fixtures for 82-byte and 160-byte status
+responses. In particular, the ADT-09UX4RBL8 packet in
+[issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6) establishes a
+receive layout, **not full control compatibility**. See
+[protocol evidence](../protocol.md) before adding a model based on a successful
+packet decode. No hybrid IR controller or zoffypal v3 model-specific support is
+included.
+
 ## Adding Your Device
 
 If you've successfully used this component with a Hisense AC model not listed here, please consider contributing by:

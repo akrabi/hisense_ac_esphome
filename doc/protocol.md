@@ -63,9 +63,9 @@ No zoffypal v3 or other model-specific protocol is enabled.
 Do not infer response semantics from inconsistent upstream prose or fixture
 descriptions. Short responses and other classes/lengths are deliberately not
 decoded or treated as command success. No short acknowledgment format or unique
-transaction correlation has been verified. A recognized status still releases
-the **existing** response wait for compatibility; it does not prove execution of
-the last command. The existing 500 ms send timeout remains unchanged.
+transaction correlation has been verified. A recognized status may update the
+reported state; it does not by itself prove execution of the last command.
+The transaction engine below checks requested fields after an explicit poll.
 
 The decoder preserves only mappings used by the old component:
 
@@ -263,6 +263,67 @@ decoding and signed arithmetic, never packed bitfields or a raw-buffer cast.
 Native tests link this production implementation. Generated frame builders in
 the tests are synthetic stimulus only; the independently retained public captures
 and all original command goldens anchor checksum/framing checks.
+
+## Asynchronous transactions
+
+Each instance owns an eight-operation pending queue and one active operation.
+`control()`, display writes, and periodic `update()` only enqueue work.
+`loop()` consumes at most 512 RX bytes per iteration and advances a timestamp-
+driven state machine; it does not sleep, flush the UART, or wait for responses.
+
+A fresh baseline status precedes an operation. Its power/mode, setpoint, fan,
+swing, preset, and display steps retain their prerequisite ordering. After a
+control packet drains, a 500 ms settling interval is followed by an explicit
+status poll. Only status received after poll drain, within its 500 ms response
+window, can satisfy that step's expected fields. A stale but valid mismatch can
+cause additional polls within the operation lifetime, never a control retry.
+
+Acceptance is atomic for combined calls. Only consecutive unsent temperature,
+fan, or display-only requests of the same kind can supersede each other; mode
+barriers and active commands are preserved. Polls are deduplicated. A failure
+cancels dependent queued work and schedules at most one read-only recovery poll.
+Queued and active operations expire 10 seconds after acceptance, including when
+there is no RX traffic, and expired controls are not replayed after reconnection.
+
+There are no verified unique transaction IDs. A late unsolicited status cannot
+always be distinguished from a poll response. Matching the expected reported
+fields is stronger than treating any packet as an ACK, but is not unique command
+correlation. Preset feedback remains unverified; sending those command bytes
+does not result in a fabricated confirmed preset.
+
+### UART backend and timing assumptions
+
+The supported native ESP32 IDF UART is exclusively owned by one AC component.
+Final validation rejects other UART consumers, direct YAML `uart.write`, debug
+callbacks and flow-control configuration. Lambdas must not bypass ownership.
+Outgoing frames are bounded to 64 wire bytes and must fit the hardware FIFO.
+
+In the inspected ESPHome 2026.8.2 / ESP-IDF 5.5.5 backend, the TX ring buffer is
+disabled. `uart_write_bytes()` copies into available FIFO space; it can wait when
+that space is insufficient. With exclusive ownership and a complete short frame
+in an idle FIFO, no line-drain wait is needed. The engine prevents another write
+until `ceil(wire_bytes * 10 * 1000 / 9600) + 2 ms` has elapsed. Compile-time and
+LP-UART runtime checks reject insufficient FIFO capacity.
+
+This is a driver-based timing model, **not a hardware latency measurement**.
+Writes taking at least 10 ms emit a warning. Other backends, manual UART access,
+and arbitrary RS485 direction-control hardware are not covered. Hardware
+acceptance must include callback latency and disconnect/burst behavior.
+
+## Reported state, diagnostics and evidence limits
+
+Climate and sensor state are published from validated snapshots, not when a
+poll is queued. By default controls also remain device-reported. Optional
+optimistic presentation overlays accepted controls only; measurements and
+compressor action remain reported. Per-field generations prevent an older
+operation from removing a newer request's presentation.
+
+Optional communication health, status age, parser-error, response-timeout and
+queue-rejection entities are documented in the configuration guide. Parser
+error counters survive parser resets, saturate rather than wrap, and reset on
+device reboot. Error logs are rate-limited and identify the last failure reason.
+Unknown payload tail meanings, named hardware faults and preset feedback are
+not inferred from legacy field names.
 
 ## Swing control
 
