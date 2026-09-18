@@ -1,4 +1,4 @@
-"""Generate golden linkage tests and extract the actual component RX adapter."""
+"""Generate golden linkage tests without rebuilding fixtures from production."""
 import json
 from pathlib import Path
 import sys
@@ -24,9 +24,3 @@ for name, data in fixtures.items():
     ]
 lines += ["  return 0;", "}"]
 (OUT / "command_tests.cpp").write_text("\n".join(lines))
-
-source = (ROOT / "components" / "hisense_ac" / "hisense_ac.cpp").read_text()
-start = source.index("bool HisenseAC::get_response(")
-end = source.index("// This function buffers messages", start)
-method = source[start:end]
-(OUT / "response_method.inc").write_text(method)

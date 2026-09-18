@@ -1,363 +1,185 @@
-#include "esphome/core/component.h"
-#include "esphome/core/helpers.h"
-#include "esphome/components/climate/climate.h"
-#include "esphome/components/sensor/sensor.h"
-#include "esphome/components/uart/uart.h"
 #include "hisense_ac.h"
-#include "commands.h"
+#include <cmath>
+#ifdef USE_ESP32
+#include "esphome/components/uart/uart_component_esp_idf.h"
+#include "soc/soc_caps.h"
+static_assert(SOC_UART_FIFO_LEN >= esphome::hisense_ac::transport::MAX_PACKET_SIZE,
+              "Hisense packets must fit the hardware TX FIFO");
+#endif
 
 namespace esphome {
 namespace hisense_ac {
+namespace {
+bool encode_mode(climate::ClimateMode mode, uint8_t &out) {
+    switch (mode) {
+        case climate::CLIMATE_MODE_OFF: out = transport::MODE_OFF; return true;
+        case climate::CLIMATE_MODE_FAN_ONLY: out = 0; return true;
+        case climate::CLIMATE_MODE_HEAT: out = 1; return true;
+        case climate::CLIMATE_MODE_COOL: out = 2; return true;
+        case climate::CLIMATE_MODE_DRY: out = 3; return true;
+        default: return false;
+    }
+}
+bool encode_fan(climate::ClimateFanMode fan, uint8_t &out) {
+    switch (fan) {
+        case climate::CLIMATE_FAN_AUTO: out = 0; return true;
+        case climate::CLIMATE_FAN_QUIET: out = 2; return true;
+        case climate::CLIMATE_FAN_LOW: out = 10; return true;
+        case climate::CLIMATE_FAN_MEDIUM: out = 14; return true;
+        case climate::CLIMATE_FAN_HIGH: out = 18; return true;
+        default: return false;
+    }
+}
+bool encode_swing(climate::ClimateSwingMode swing, uint8_t &out) {
+    switch (swing) {
+        case climate::CLIMATE_SWING_OFF: out = 0; return true;
+        case climate::CLIMATE_SWING_HORIZONTAL: out = 1; return true;
+        case climate::CLIMATE_SWING_VERTICAL: out = 2; return true;
+        case climate::CLIMATE_SWING_BOTH: out = 3; return true;
+        default: return false;
+    }
+}
+}  // namespace
 
 HisenseAC::HisenseAC(uart::UARTComponent *parent) : PollingComponent(5000), uart::UARTDevice(parent) {}
+void HisenseAC::set_temperature_unit(Temperature_Unit unit) { temp_unit = unit; }
+void HisenseAC::set_compressor_frequency(sensor::Sensor *sensor) { compressor_frequency = sensor; }
+void HisenseAC::set_compressor_frequency_setting(sensor::Sensor *sensor) { compressor_frequency_setting = sensor; }
+void HisenseAC::set_compressor_frequency_send(sensor::Sensor *sensor) { compressor_frequency_send = sensor; }
+void HisenseAC::set_outdoor_temperature(sensor::Sensor *sensor) { outdoor_temperature = sensor; }
+void HisenseAC::set_outdoor_condenser_temperature(sensor::Sensor *sensor) { outdoor_condenser_temperature = sensor; }
+void HisenseAC::set_compressor_exhaust_temperature(sensor::Sensor *sensor) { compressor_exhaust_temperature = sensor; }
+void HisenseAC::set_target_exhaust_temperature(sensor::Sensor *sensor) { target_exhaust_temperature = sensor; }
+void HisenseAC::set_indoor_pipe_temperature(sensor::Sensor *sensor) { indoor_pipe_temperature = sensor; }
+void HisenseAC::set_indoor_humidity_setting(sensor::Sensor *sensor) { indoor_humidity_setting = sensor; }
+void HisenseAC::set_indoor_humidity_status(sensor::Sensor *sensor) { indoor_humidity_status = sensor; }
+void HisenseAC::set_display_switch(switch_::Switch *display_switch) { display_switch_ = display_switch; }
 
-void HisenseAC::set_temperature_unit(Temperature_Unit unit) { 
-    this->temp_unit = unit; 
-}
-
-void HisenseAC::set_compressor_frequency(sensor::Sensor *sensor) { 
-    compressor_frequency = sensor; 
-}
-
-void HisenseAC::set_compressor_frequency_setting(sensor::Sensor *sensor) { 
-    compressor_frequency_setting = sensor; 
-}
-
-void HisenseAC::set_compressor_frequency_send(sensor::Sensor *sensor) { 
-    compressor_frequency_send = sensor; 
-}
-
-void HisenseAC::set_outdoor_temperature(sensor::Sensor *sensor) { 
-    outdoor_temperature = sensor; 
-}
-
-void HisenseAC::set_outdoor_condenser_temperature(sensor::Sensor *sensor) { 
-    outdoor_condenser_temperature = sensor; 
-}
-
-void HisenseAC::set_compressor_exhaust_temperature(sensor::Sensor *sensor) { 
-    compressor_exhaust_temperature = sensor; 
-}
-
-void HisenseAC::set_target_exhaust_temperature(sensor::Sensor *sensor) { 
-    target_exhaust_temperature = sensor; 
-}
-
-void HisenseAC::set_indoor_pipe_temperature(sensor::Sensor *sensor) { 
-    indoor_pipe_temperature = sensor; 
-}
-
-void HisenseAC::set_indoor_humidity_setting(sensor::Sensor *sensor) { 
-    indoor_humidity_setting = sensor; 
-}
-
-void HisenseAC::set_indoor_humidity_status(sensor::Sensor *sensor) { 
-    indoor_humidity_status = sensor; 
-}
-
-void HisenseAC::set_display_switch(switch_::Switch *display_switch) {
-    display_switch_ = display_switch;
-}
-
-void HisenseAC::set_display(bool state) {
+bool HisenseAC::set_display(bool state) {
+    transport::Request request;
+    request.fields = transport::FIELD_DISPLAY;
+    request.display = state;
+    uint32_t generation;
+    if (!transport_.enqueue(request, millis(), generation)) {
+        ESP_LOGW("hisense_ac", "Display request rejected: operation queue full.");
+        return false;
+    }
+    display_generation_ = generation;
     display_state_pending_ = true;
     display_target_state_ = state;
     display_state_pending_since_ = millis();
-
-    if (state)
-    {
-        blocking_send(display_on, sizeof(display_on));
-    }
-    else
-    {
-        blocking_send(display_off, sizeof(display_off));
-    }
-
-    // The command response can still contain the previous display state.
-    // Queue a fresh status request so the desired state is confirmed quickly.
-    request_update();
+    return true;
 }
 
 void HisenseACDisplaySwitch::write_state(bool state) {
-    parent_->set_display(state);
-    publish_state(state);
+    if (parent_->set_display(state)) publish_state(state);
 }
 
-void HisenseAC::setup()
-{
-    if (compressor_frequency != nullptr)
-    {
-        compressor_frequency->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_frequency_setting != nullptr)
-    {
-        compressor_frequency_setting->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_frequency_send != nullptr)
-    {
-        compressor_frequency_send->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (outdoor_temperature != nullptr)
-    {
-        outdoor_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (outdoor_condenser_temperature != nullptr)
-    {
-        outdoor_condenser_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_exhaust_temperature != nullptr)
-    {
-        compressor_exhaust_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (target_exhaust_temperature != nullptr)
-    {
-        target_exhaust_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_pipe_temperature != nullptr)
-    {
-        indoor_pipe_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_humidity_setting != nullptr)
-    {
-        indoor_humidity_setting->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_humidity_status != nullptr)
-    {
-        indoor_humidity_status->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_frequency != nullptr)
-    {
-        compressor_frequency->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_frequency_setting != nullptr)
-    {
-        compressor_frequency_setting->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_frequency_send != nullptr)
-    {
-        compressor_frequency_send->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (outdoor_temperature != nullptr)
-    {
-        outdoor_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (outdoor_condenser_temperature != nullptr)
-    {
-        outdoor_condenser_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (compressor_exhaust_temperature != nullptr)
-    {
-        compressor_exhaust_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (target_exhaust_temperature != nullptr)
-    {
-        target_exhaust_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_pipe_temperature != nullptr)
-    {
-        indoor_pipe_temperature->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_humidity_setting != nullptr)
-    {
-        indoor_humidity_setting->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
-    }
-    if (indoor_humidity_status != nullptr)
-    {
-        indoor_humidity_status->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
+void HisenseAC::setup() {
+    for (auto *sensor : {compressor_frequency, compressor_frequency_setting, compressor_frequency_send,
+                        outdoor_temperature, outdoor_condenser_temperature, compressor_exhaust_temperature,
+                        target_exhaust_temperature, indoor_pipe_temperature, indoor_humidity_setting,
+                        indoor_humidity_status}) {
+        if (sensor != nullptr) sensor->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
     }
     request_update();
 }
 
-void HisenseAC::loop()
-{
+void HisenseAC::loop() {
     parser_.expire(millis());
-    while (this->available())
-    {
-        if (get_response(this->read()))
-        {
-            ESP_LOGD(
-                "hisense_ac",
-                "compf: %d compf_set: %d compf_snd: %d",
-                status_.compressor_frequency,
-                status_.compressor_frequency_setting,
-                status_.compressor_frequency_send);
+    // Bound RX work so a noisy line cannot starve deadlines or other components.
+    for (size_t budget = 0; budget < 512 && available(); ++budget) {
+        if (get_response(read())) apply_status_();
+    }
+    transport_.tick(millis());
+    if (display_state_pending_ && millis() - display_state_pending_since_ >= DISPLAY_STATE_TIMEOUT_MS) {
+        display_state_pending_ = false;
+        ESP_LOGW("hisense_ac", "Display confirmation expired.");
+    }
+}
 
-            ESP_LOGD(
-                "hisense_ac",
-                "out_temp: %d out_cond_temp: %d comp_exh_temp: %d comp_exh_temp_tgt: %d",
-                status_.outdoor_temperature,
-                status_.outdoor_condenser_temperature,
-                status_.compressor_exhaust_temperature,
-                status_.target_exhaust_temperature);
+bool HisenseAC::get_response(uint8_t input) {
+    const size_t size = parser_.feed(input, millis());
+    if (size == 0) return false;
+    if (!protocol::decode_status(parser_.data(), size, status_)) {
+        ESP_LOGD("hisense_ac", "Ignoring unsupported response (%u bytes).", static_cast<unsigned>(size));
+        return false;
+    }
+    has_status_ = true;
+    last_status_at_ = millis();
+    transport_.receive(status_, last_status_at_);
+    return true;
+}
 
-            ESP_LOGD(
-                "hisense_ac",
-                "indoor_pipe_temp %d",
-                status_.indoor_pipe_temperature);
+bool HisenseAC::send_packet(const uint8_t *data, size_t size) {
+    // Final YAML validation requires this backend and exclusive ownership.
+    auto *backend = static_cast<uart::IDFUARTComponent *>(parent_);
+    if (size > transport::MAX_PACKET_SIZE || backend->is_failed()) return false;
+    const uint32_t started = millis();
+    write_array(data, size);
+    if (millis() - started >= 10)
+        ESP_LOGW("hisense_ac", "UART write exceeded 10 ms; check exclusive bus ownership and backend.");
+    return !backend->is_failed();
+}
 
-            ESP_LOGD(
-                "hisense_ac",
-                "indor_humid_set: %d indoor_humid: %d",
-                status_.indoor_humidity_setting,
-                status_.indoor_humidity_status);
+void HisenseAC::operation_finished(uint32_t generation, transport::Result result,
+                                  const transport::Request &request) {
+    if (result == transport::Result::UNVERIFIED)
+        ESP_LOGW("hisense_ac", "Preset bytes sent; preset feedback is unverified, not confirmed.");
+    else if (result != transport::Result::CONFIRMED && result != transport::Result::SUPERSEDED) {
+        ESP_LOGW("hisense_ac", "Operation %u ended without confirmation (reason %u).",
+                 static_cast<unsigned>(generation), static_cast<unsigned>(result));
+        status_set_warning("AC operation not confirmed");
+    }
+    if ((request.fields & transport::FIELD_DISPLAY) && generation == display_generation_ &&
+        result != transport::Result::SUPERSEDED)
+        display_state_pending_ = false;
+}
 
-            // Convert temperatures to celsius
-            float tgt_temp = status_.indoor_temperature_setting;
-            float curr_temp = status_.indoor_temperature_status;
-            
-            if (this->temp_unit == Temperature_Unit::CELSIUS && tgt_temp > 7 && tgt_temp < 33 ||
-                this->temp_unit == Temperature_Unit::FAHRENHEIT && tgt_temp > 45 && tgt_temp < 91)
-            {
-                target_temperature = tgt_temp;
-            }
-
-            if (this->temp_unit == Temperature_Unit::CELSIUS && curr_temp > 1 && curr_temp < 49 ||
-                this->temp_unit == Temperature_Unit::FAHRENHEIT && curr_temp > 34 && curr_temp < 120)
-            {
-
-                current_temperature = curr_temp;
-            }
-
-            // See if the system is actively running
-            bool comp_running = false;
-            if (status_.compressor_frequency > 0)
-            {
-                comp_running = true;
-            }
-
-            if (status_.left_right && status_.up_down)
-                swing_mode = climate::CLIMATE_SWING_BOTH;
-            else if (status_.left_right)
-                swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-            else if (status_.up_down)
-                swing_mode = climate::CLIMATE_SWING_VERTICAL;
-            else
-                swing_mode = climate::CLIMATE_SWING_OFF;
-
-            if (status_.run_status == 0)
-            {
-                mode = climate::CLIMATE_MODE_OFF;
-                action = climate::CLIMATE_ACTION_OFF;
-            }
-            else if (status_.mode_status == 0)
-            {
-                mode = climate::CLIMATE_MODE_FAN_ONLY;
-                action = climate::CLIMATE_ACTION_FAN;
-            }
-            else if (status_.mode_status == 1)
-            {
-                mode = climate::CLIMATE_MODE_HEAT;
-                if (comp_running)
-                {
-                    action = climate::CLIMATE_ACTION_HEATING;
-                }
-                else
-                {
-                    action = climate::CLIMATE_ACTION_IDLE;
-                }
-            }
-            else if (status_.mode_status == 2)
-            {
-                mode = climate::CLIMATE_MODE_COOL;
-                if (comp_running)
-                {
-                    action = climate::CLIMATE_ACTION_COOLING;
-                }
-                else
-                {
-                    action = climate::CLIMATE_ACTION_IDLE;
-                }
-            }
-            else if (status_.mode_status == 3)
-            {
-                mode = climate::CLIMATE_MODE_DRY;
-                if (comp_running)
-                {
-                    action = climate::CLIMATE_ACTION_DRYING;
-                }
-                else
-                {
-                    action = climate::CLIMATE_ACTION_IDLE;
-                }
-            }
-
-            if (status_.wind_status == 18)
-            {
-                fan_mode = climate::CLIMATE_FAN_HIGH;
-            }
-            else if (status_.wind_status == 14)
-            {
-                fan_mode = climate::CLIMATE_FAN_MEDIUM;
-            }
-            else if (status_.wind_status == 10)
-            {
-                fan_mode = climate::CLIMATE_FAN_LOW;
-            }
-            else if (status_.wind_status == 2)
-            {
-                fan_mode = climate::CLIMATE_FAN_QUIET;
-            }
-            else if (status_.wind_status == 0)
-            {
-                fan_mode = climate::CLIMATE_FAN_AUTO;
-            }
-
-            if (display_switch_ != nullptr)
-            {
-                // Verified on ACOND ASTI-09UW4RVEDC00 (AEH-W4B1):
-                // display_on/off changes status byte 37 (zero-based) between
-                // 0x80 and 0x00 (back_led); display_led (0x40) remains clear.
-                // Other indoor-unit variants have not been verified.
-                bool display_state = status_.back_led;
-                bool accept_display_state = true;
-
-                if (display_state_pending_)
-                {
-                    if (display_state == display_target_state_)
-                    {
-                        display_state_pending_ = false;
-                    }
-                    else if (millis() - display_state_pending_since_ < DISPLAY_STATE_TIMEOUT_MS)
-                    {
-                        accept_display_state = false;
-                        ESP_LOGV("hisense_ac", "Ignoring stale display state while waiting for command confirmation.");
-                    }
-                    else
-                    {
-                        display_state_pending_ = false;
-                        ESP_LOGW("hisense_ac", "Display command was not confirmed within the timeout.");
-                    }
-                }
-
-                if (accept_display_state)
-                {
-                    display_switch_->publish_state(display_state);
-                }
-            }
-
-            // Save target temperature since it gets messed up by the mode switch command
-            if (this->mode == climate::CLIMATE_MODE_COOL && target_temperature > 0)
-            {
-                cool_tgt_temp = target_temperature;
-            }
-            else if (this->mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0)
-            {
-                heat_tgt_temp = target_temperature;
-            }
+void HisenseAC::apply_status_() {
+    float target = status_.indoor_temperature_setting;
+    float current = status_.indoor_temperature_status;
+    if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
+        (temp_unit == FAHRENHEIT && target > 45 && target < 91))
+        target_temperature = target;
+    if ((temp_unit == CELSIUS && current > 1 && current < 49) ||
+        (temp_unit == FAHRENHEIT && current > 34 && current < 120))
+        current_temperature = current;
+    const bool running = status_.compressor_frequency > 0;
+    if (status_.run_status == 0) {
+        mode = climate::CLIMATE_MODE_OFF;
+        action = climate::CLIMATE_ACTION_OFF;
+    } else {
+        switch (status_.mode_status) {
+            case 0: mode = climate::CLIMATE_MODE_FAN_ONLY; action = climate::CLIMATE_ACTION_FAN; break;
+            case 1: mode = climate::CLIMATE_MODE_HEAT; action = running ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE; break;
+            case 2: mode = climate::CLIMATE_MODE_COOL; action = running ? climate::CLIMATE_ACTION_COOLING : climate::CLIMATE_ACTION_IDLE; break;
+            case 3: mode = climate::CLIMATE_MODE_DRY; action = running ? climate::CLIMATE_ACTION_DRYING : climate::CLIMATE_ACTION_IDLE; break;
         }
     }
-
-    // Send buffered data without inserting any new messages
-    blocking_send(0, 0);
+    swing_mode = status_.left_right ? (status_.up_down ? climate::CLIMATE_SWING_BOTH : climate::CLIMATE_SWING_HORIZONTAL) :
+                                    (status_.up_down ? climate::CLIMATE_SWING_VERTICAL : climate::CLIMATE_SWING_OFF);
+    switch (status_.wind_status) {
+        case 0: fan_mode = climate::CLIMATE_FAN_AUTO; break;
+        case 2: fan_mode = climate::CLIMATE_FAN_QUIET; break;
+        case 10: fan_mode = climate::CLIMATE_FAN_LOW; break;
+        case 14: fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
+        case 18: fan_mode = climate::CLIMATE_FAN_HIGH; break;
+    }
+    // back_led is verified only on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1.
+    if (display_switch_ != nullptr &&
+        (!display_state_pending_ || status_.back_led == display_target_state_)) {
+        display_state_pending_ = false;
+        display_switch_->publish_state(status_.back_led);
+    }
+    if (!transport_.busy()) save_target_temperture();
 }
 
-void HisenseAC::update()
-{
+void HisenseAC::request_update() { transport_.request_poll(); }
+
+void HisenseAC::update() {
     request_update();
-
-    this->publish_state();
-
-    // Update sensors
+    publish_state();
     set_sensor(compressor_frequency, status_.compressor_frequency);
     set_sensor(compressor_frequency_setting, status_.compressor_frequency_setting);
     set_sensor(compressor_frequency_send, status_.compressor_frequency_send);
@@ -368,485 +190,84 @@ void HisenseAC::update()
     set_sensor(indoor_pipe_temperature, status_.indoor_pipe_temperature);
     set_sensor(indoor_humidity_setting, status_.indoor_humidity_setting);
     set_sensor(indoor_humidity_status, status_.indoor_humidity_status);
-    save_target_temperture();
 }
 
-void HisenseAC::control(const climate::ClimateCall &call)
-{
-    ESP_LOGD("hisense_ac", "Received climate call with mode: %s, target_temp: %.1f, fan_mode: %s, swing_mode: %s",
-             call.get_mode().has_value() ? climate::climate_mode_to_string(call.get_mode().value()) : LOG_STR("Unknown"),
-             call.get_target_temperature().has_value() ? call.get_target_temperature().value() : 0.0f,
-             call.get_fan_mode().has_value() ? climate::climate_fan_mode_to_string(call.get_fan_mode().value()) : LOG_STR("Unknown"),
-             call.get_swing_mode().has_value() ? climate::climate_swing_mode_to_string(call.get_swing_mode().value()) : LOG_STR("Unknown"));
-
-    if (call.get_mode().has_value())
-    {
-        save_target_temperture();
-
-        // User requested mode change
-        climate::ClimateMode md = *call.get_mode();
-
-        if (md != climate::CLIMATE_MODE_OFF && this->mode == climate::CLIMATE_MODE_OFF)
-        {
-            blocking_send(on, sizeof(on));
-        }
-
-        switch (md)
-        {
-            case climate::CLIMATE_MODE_OFF:
-                blocking_send(off, sizeof(off));
-                break;
-            case climate::CLIMATE_MODE_COOL:
-                blocking_send(mode_cool, sizeof(mode_cool));
-                set_temp(cool_tgt_temp);
-                break;
-            case climate::CLIMATE_MODE_HEAT:
-                blocking_send(mode_heat, sizeof(mode_heat));
-                set_temp(heat_tgt_temp);
-                break;
-            case climate::CLIMATE_MODE_FAN_ONLY:
-                blocking_send(mode_fan, sizeof(mode_fan));
-                break;
-            case climate::CLIMATE_MODE_DRY:
-                blocking_send(mode_dry, sizeof(mode_dry));
-                break;
-            default:
-                break;
-        }
-
-        // Publish updated state
-        this->mode = md;
-        this->publish_state();
+void HisenseAC::control(const climate::ClimateCall &call) {
+    transport::Request request;
+    request.fahrenheit = temp_unit == FAHRENHEIT;
+    bool valid = true;
+    if (call.get_mode().has_value()) {
+        request.fields |= transport::MODE;
+        valid &= encode_mode(*call.get_mode(), request.mode);
     }
-
-    if (call.get_target_temperature().has_value())
-    {
-        // User requested target temperature change
-        float temp = *call.get_target_temperature();
-
-        set_temp(temp);
-
-        // Send target temp to climate
-        target_temperature = temp;
-        this->publish_state();
+    if (call.get_target_temperature().has_value() ||
+        ((request.fields & transport::MODE) && (request.mode == 1 || request.mode == 2))) {
+        const float target = call.get_target_temperature().has_value() ? *call.get_target_temperature() :
+                             request.mode == 1 ? heat_tgt_temp : cool_tgt_temp;
+        valid &= std::isfinite(target) && target >= (request.fahrenheit ? 61 : 16) &&
+                 target <= (request.fahrenheit ? 90 : 32);
+        if (valid) {
+            request.fields |= transport::TEMPERATURE;
+            request.temperature = static_cast<uint8_t>(roundf(target));
+        }
     }
-
-    if (call.get_fan_mode().has_value())
-    {
-        climate::ClimateFanMode fm = *call.get_fan_mode();
-        switch (fm)
-        {
-        case climate::CLIMATE_FAN_AUTO:
-            blocking_send(speed_auto, sizeof(speed_auto));
-            break;
-        case climate::CLIMATE_FAN_LOW:
-            blocking_send(speed_low, sizeof(speed_low));
-            break;
-        case climate::CLIMATE_FAN_MEDIUM:
-            blocking_send(speed_med, sizeof(speed_med));
-            break;
-        case climate::CLIMATE_FAN_HIGH:
-            blocking_send(speed_max, sizeof(speed_max));
-            break;
-        case climate::CLIMATE_FAN_QUIET:
-            blocking_send(speed_mute, sizeof(speed_mute));
-            break;
-        default:
-            break;
-        }
-        fan_mode = fm;
-        this->publish_state();
+    if (call.get_fan_mode().has_value()) {
+        request.fields |= transport::FAN;
+        valid &= encode_fan(*call.get_fan_mode(), request.fan);
     }
-
-    if (call.get_swing_mode().has_value())
-    {
-        climate::ClimateSwingMode sm = *call.get_swing_mode();
-
-        if (sm == climate::CLIMATE_SWING_OFF)
-        {
-            if (climate::CLIMATE_SWING_BOTH == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-            else if (climate::CLIMATE_SWING_VERTICAL == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-            }
-            else if (climate::CLIMATE_SWING_HORIZONTAL == swing_mode)
-            {
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-        }
-        else if (sm == climate::CLIMATE_SWING_BOTH)
-        {
-            if (climate::CLIMATE_SWING_OFF == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-            else if (climate::CLIMATE_SWING_VERTICAL == swing_mode)
-            {
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-            else if (climate::CLIMATE_SWING_HORIZONTAL == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-            }
-        }
-        else if (sm == climate::CLIMATE_SWING_VERTICAL)
-        {
-            if (climate::CLIMATE_SWING_BOTH == swing_mode)
-            {
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-            else if (climate::CLIMATE_SWING_HORIZONTAL == swing_mode)
-            {
-                blocking_send(hor_swing, sizeof(hor_swing));
-                blocking_send(vert_swing, sizeof(vert_swing));
-            }
-        }
-        else if (sm == climate::CLIMATE_SWING_HORIZONTAL)
-        {
-            if (climate::CLIMATE_SWING_BOTH == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-            }
-            else if (climate::CLIMATE_SWING_VERTICAL == swing_mode)
-            {
-                blocking_send(vert_swing, sizeof(vert_swing));
-                blocking_send(hor_swing, sizeof(hor_swing));
-            }
-        }
-
-        swing_mode = sm;
-        this->publish_state();
+    if (call.get_swing_mode().has_value()) {
+        request.fields |= transport::SWING;
+        valid &= encode_swing(*call.get_swing_mode(), request.swing);
     }
-
-    if (call.get_preset().has_value())
-    {
-        climate::ClimatePreset pre = *call.get_preset();
-        switch (pre)
-        {
-        case climate::CLIMATE_PRESET_NONE:
-            blocking_send(turbo_off, sizeof(turbo_off));
-            blocking_send(energysave_off, sizeof(energysave_off));
-            break;
-        case climate::CLIMATE_PRESET_BOOST:
-            blocking_send(turbo_on, sizeof(turbo_on));
-            break;
-        case climate::CLIMATE_PRESET_ECO:
-            blocking_send(energysave_on, sizeof(energysave_on));
-            break;
-        default:
-            break;
+    if (call.get_preset().has_value()) {
+        request.fields |= transport::PRESET;
+        switch (*call.get_preset()) {
+            case climate::CLIMATE_PRESET_NONE: request.preset = 0; break;
+            case climate::CLIMATE_PRESET_BOOST: request.preset = 1; break;
+            case climate::CLIMATE_PRESET_ECO: request.preset = 2; break;
+            default: valid = false; break;
         }
-
-        preset = pre;
-        this->publish_state();
     }
+    uint32_t generation;
+    if (!valid || !transport_.enqueue(request, millis(), generation)) {
+        ESP_LOGW("hisense_ac", "Climate call rejected: invalid controls or full operation queue.");
+        return;
+    }
+    // Compatibility presentation retained here; state-sync changes the default.
+    if (call.get_mode().has_value()) mode = *call.get_mode();
+    if (request.fields & transport::TEMPERATURE) target_temperature = request.temperature;
+    if (call.get_fan_mode().has_value()) fan_mode = *call.get_fan_mode();
+    if (call.get_swing_mode().has_value()) swing_mode = *call.get_swing_mode();
+    if (call.get_preset().has_value()) preset = *call.get_preset();
+    publish_state();
 }
 
-void HisenseAC::save_target_temperture()
-{
-    // Save target temperature since it gets messed up by the mode switch command
-    if (this->mode == climate::CLIMATE_MODE_COOL && target_temperature > 0)
-    {
-        cool_tgt_temp = target_temperature;
-    }
-    else if (this->mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0)
-    {
-        heat_tgt_temp = target_temperature;
-    }
+void HisenseAC::save_target_temperture() {
+    if (mode == climate::CLIMATE_MODE_COOL && target_temperature > 0) cool_tgt_temp = target_temperature;
+    else if (mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0) heat_tgt_temp = target_temperature;
 }
 
-climate::ClimateTraits HisenseAC::traits()
-{
-    // The capabilities of the climate device
-    climate::ClimateTraits traits = climate::ClimateTraits();
+void HisenseAC::set_sensor(sensor::Sensor *sensor, float value) {
+    if (sensor != nullptr && (!sensor->has_state() || sensor->get_raw_state() != value))
+        sensor->publish_state(value);
+}
+
+climate::ClimateTraits HisenseAC::traits() {
+    climate::ClimateTraits traits;
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);
     traits.set_visual_min_temperature(16);
     traits.set_visual_max_temperature(30);
     traits.set_visual_temperature_step(1);
-    traits.set_supported_modes({
-        climate::CLIMATE_MODE_OFF,
-        climate::CLIMATE_MODE_COOL,
-        climate::CLIMATE_MODE_HEAT,
-        climate::CLIMATE_MODE_FAN_ONLY,
-        climate::CLIMATE_MODE_DRY,
-    });
-    traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF,
-                                        climate::CLIMATE_SWING_BOTH,
-                                        climate::CLIMATE_SWING_VERTICAL,
-                                        climate::CLIMATE_SWING_HORIZONTAL});
-    traits.set_supported_fan_modes({
-        climate::CLIMATE_FAN_AUTO,
-        climate::CLIMATE_FAN_LOW,
-        climate::CLIMATE_FAN_MEDIUM,
-        climate::CLIMATE_FAN_HIGH,
-        climate::CLIMATE_FAN_QUIET,
-    });
-    traits.set_supported_presets({climate::CLIMATE_PRESET_NONE,
-                                    climate::CLIMATE_PRESET_BOOST,
-                                    climate::CLIMATE_PRESET_ECO});
+    traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
+                               climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY});
+    traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
+                                     climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
+    traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
+                                   climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH, climate::CLIMATE_FAN_QUIET});
+    traits.set_supported_presets({climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_BOOST, climate::CLIMATE_PRESET_ECO});
     return traits;
 }
 
-
-
-bool HisenseAC::get_response(uint8_t input)
-{
-    const size_t size = parser_.feed(input, millis());
-    if (size == 0)
-        return false;
-    if (!protocol::decode_status(parser_.data(), size, status_))
-    {
-        ESP_LOGD("hisense_ac", "Ignoring unsupported response (%u bytes).", static_cast<unsigned>(size));
-        return false;
-    }
-    // Preserves existing pacing for recognized status responses. This does not
-    // prove command execution; transaction correlation is not yet implemented.
-    wait_for_rx = false;
-    return true;
-}
-
-// This function buffers messages to be sent to the AC.
-// Send messages one at a time and wait for each acknowledgement.
-void HisenseAC::blocking_send(uint8_t buf[], size_t sz)
-{
-    static uint8_t insert = 0;
-    static uint8_t read = 0;
-    static uint8_t hold_buf[8][64] = {0};
-    static size_t sz_buf[8] = {0,0,0,0,0,0,0,0};
-    static uint8_t num_buffered = 0;
-    static uint32_t start_time = 0;
-
-    if (sz > 0)
-    {
-        ESP_LOGD("hisense_ac", 
-                "Buffering message. Read: %d Insert: %d",
-                read,
-                insert);
-        memcpy(hold_buf[insert], buf, sz);
-        sz_buf[insert] = sz;
-        insert = (insert + 1) & 7;
-        if (num_buffered == 0)
-        {
-            start_time = millis();
-        }
-        num_buffered++;   
-    }
-
-    // Return if we're waiting. If we get to seven messages buffered, 
-    // there's probably an issue and we shouldn't block anymore.
-    if (num_buffered < 8 && wait_for_rx && (millis() - start_time < 500))
-    {
-        return;
-    }
-
-    if (sz_buf[read] > 0)
-    {
-        ESP_LOGD("hisense_ac", 
-                "Sending message. Read: %d Insert: %d",
-                read,
-                insert);
-        uart::UARTDevice::write_array(hold_buf[read], sz_buf[read]);
-        uart::UARTDevice::flush();
-        sz_buf[read] = 0;
-        read = (read + 1) & 7;
-        wait_for_rx = true;
-        num_buffered--;
-        start_time = millis();
-    }
-}
-
-// Get status from the AC
-void HisenseAC::request_update()
-{
-    uint8_t req_stat[] = {
-        0xF4, 0xF5, 0x00, 0x40,
-        0x0C, 0x00, 0x00, 0x01,
-        0x01, 0xFE, 0x01, 0x00,
-        0x00, 0x66, 0x00, 0x00,
-        0x00, 0x01, 0xB3, 0xF4,
-        0xFB};
-
-    ESP_LOGD("hisense_ac", "Requesting update.");
-    blocking_send(req_stat, sizeof(req_stat));
-}
-
-// Update sensors when the value has actually changed.
-void HisenseAC::set_sensor(sensor::Sensor *sensor, float value)
-{
-    if (sensor != nullptr && (!sensor->has_state() || sensor->get_raw_state() != value))
-    {
-        sensor->publish_state(value);
-    }
-}
-
-// Set the temperature
-void HisenseAC::set_temp(float temp)
-{
-    uint8_t rounded_temp = roundf(temp);
-    if (this->temp_unit == Temperature_Unit::CELSIUS)
-    {
-        switch (rounded_temp)
-        {
-            case 16:
-                blocking_send(temp_16_C, sizeof(temp_16_C));
-                break;
-            case 17:
-                blocking_send(temp_17_C, sizeof(temp_17_C));
-                break;
-            case 18:
-                blocking_send(temp_18_C, sizeof(temp_18_C));
-                break;
-            case 19:
-                blocking_send(temp_19_C, sizeof(temp_19_C));
-                break;
-            case 20:
-                blocking_send(temp_20_C, sizeof(temp_20_C));
-                break;
-            case 21:
-                blocking_send(temp_21_C, sizeof(temp_21_C));
-                break;
-            case 22:
-                blocking_send(temp_22_C, sizeof(temp_22_C));
-                break;
-            case 23:
-                blocking_send(temp_23_C, sizeof(temp_23_C));
-                break;
-            case 24:
-                blocking_send(temp_24_C, sizeof(temp_24_C));
-                break;
-            case 25:
-                blocking_send(temp_25_C, sizeof(temp_25_C));
-                break;
-            case 26:
-                blocking_send(temp_26_C, sizeof(temp_26_C));
-                break;
-            case 27:
-                blocking_send(temp_27_C, sizeof(temp_27_C));
-                break;
-            case 28:
-                blocking_send(temp_28_C, sizeof(temp_28_C));
-                break;
-            case 29:
-                blocking_send(temp_29_C, sizeof(temp_29_C));
-                break;
-            case 30:
-                blocking_send(temp_30_C, sizeof(temp_30_C));
-                break;
-            case 31:
-                blocking_send(temp_31_C, sizeof(temp_31_C));
-                break;
-            case 32:
-                blocking_send(temp_32_C, sizeof(temp_32_C));
-                break;
-            default:
-                break;
-        }
-    }
-    else if (this->temp_unit == Temperature_Unit::FAHRENHEIT)
-    {
-        switch (rounded_temp)
-        {
-            case 61:
-                blocking_send(temp_61_F, sizeof(temp_61_F));
-                break;
-            case 62:
-                blocking_send(temp_62_F, sizeof(temp_62_F));
-                break;
-            case 63:
-                blocking_send(temp_63_F, sizeof(temp_63_F));
-                break;
-            case 64:
-                blocking_send(temp_64_F, sizeof(temp_64_F));
-                break;
-            case 65:
-                blocking_send(temp_65_F, sizeof(temp_65_F));
-                break;
-            case 66:
-                blocking_send(temp_66_F, sizeof(temp_66_F));
-                break;
-            case 67:
-                blocking_send(temp_67_F, sizeof(temp_67_F));
-                break;
-            case 68:
-                blocking_send(temp_68_F, sizeof(temp_68_F));
-                break;
-            case 69:
-                blocking_send(temp_69_F, sizeof(temp_69_F));
-                break;
-            case 70:
-                blocking_send(temp_70_F, sizeof(temp_70_F));
-                break;
-            case 71:
-                blocking_send(temp_71_F, sizeof(temp_71_F));
-                break;
-            case 72:
-                blocking_send(temp_72_F, sizeof(temp_72_F));
-                break;
-            case 73:
-                blocking_send(temp_73_F, sizeof(temp_73_F));
-                break;
-            case 74:
-                blocking_send(temp_74_F, sizeof(temp_74_F));
-                break;
-            case 75:
-                blocking_send(temp_75_F, sizeof(temp_75_F));
-                break;
-            case 76:
-                blocking_send(temp_76_F, sizeof(temp_76_F));
-                break;
-            case 77:
-                blocking_send(temp_77_F, sizeof(temp_77_F));
-                break;
-            case 78:
-                blocking_send(temp_78_F, sizeof(temp_78_F));
-                break;
-            case 79:
-                blocking_send(temp_79_F, sizeof(temp_79_F));
-                break;
-            case 80:
-                blocking_send(temp_80_F, sizeof(temp_80_F));
-                break;
-            case 81:
-                blocking_send(temp_81_F, sizeof(temp_81_F));
-                break;
-            case 82:
-                blocking_send(temp_82_F, sizeof(temp_82_F));
-                break;
-            case 83:
-                blocking_send(temp_83_F, sizeof(temp_83_F));
-                break;
-            case 84:
-                blocking_send(temp_84_F, sizeof(temp_84_F));
-                break;
-            case 85:
-                blocking_send(temp_85_F, sizeof(temp_85_F));
-                break;
-            case 86:
-                blocking_send(temp_86_F, sizeof(temp_86_F));
-                break;
-            case 87:
-                blocking_send(temp_87_F, sizeof(temp_87_F));
-                break;
-            case 88:
-                blocking_send(temp_88_F, sizeof(temp_88_F));
-                break;
-            case 89:
-                blocking_send(temp_89_F, sizeof(temp_89_F));
-                break;
-            case 90:    
-                blocking_send(temp_90_F, sizeof(temp_90_F));
-                break;
-            default:
-                break;
-        }
-    }        
-}
-
-} // namespace hisense_ac
-} // namespace esphome
+}  // namespace hisense_ac
+}  // namespace esphome
