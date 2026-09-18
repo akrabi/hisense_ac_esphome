@@ -1,5 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
+from esphome.core import CORE, ID
 from esphome.components import climate, uart, sensor, switch
 from esphome.const import (
     CONF_ID,
@@ -63,6 +65,44 @@ CONFIG_SCHEMA = climate.climate_schema(HisenseAC).extend({
     cv.Optional(CONF_INDOOR_HUMIDITY_STATUS): SENSOR_CONFIG_SCHEMA,
     cv.Optional(CONF_DISPLAY): switch.switch_schema(HisenseACDisplaySwitch),
 }).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA)
+
+
+def validate_exclusive_uart(config):
+    if not CORE.is_esp32:
+        raise cv.Invalid("Hisense asynchronous transport requires the ESP32 IDF UART backend")
+    full = fv.full_config.get()
+    uart_id = config[uart.CONF_UART_ID]
+    path = full.get_path_for_id(uart_id)[:-1]
+    bus = full.get_config_for_path(path)
+    if not str(bus[CONF_ID].type).endswith("::IDFUARTComponent"):
+        raise cv.Invalid("Hisense requires a dedicated native ESP32 hardware UART")
+    if "debug" in bus or "flow_control_pin" in bus:
+        raise cv.Invalid("Hisense dedicated UART cannot use debug callbacks/dummy receiver or flow control")
+
+    def references(value):
+        if isinstance(value, ID):
+            return int(value.id == uart_id.id)
+        if isinstance(value, dict):
+            return sum(references(item) for item in value.values())
+        if isinstance(value, list):
+            return sum(references(item) for item in value)
+        return 0
+
+    # One declaration and this device reference. Includes uart.write actions
+    # and devices that do not implement UART's own final ownership validation.
+    if references(full) != 2:
+        raise cv.Invalid("Hisense requires exclusive UART ownership; other devices and uart.write are unsupported")
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = cv.All(
+    validate_exclusive_uart,
+    uart.final_validate_device_schema(
+        "hisense_ac", baud_rate=9600, require_tx=True, require_rx=True,
+        data_bits=8, parity="NONE", stop_bits=1,
+    ),
+)
+
 
 async def setup_sensor(config, key, var_name, unit=None, device_class=None):
     if key in config:

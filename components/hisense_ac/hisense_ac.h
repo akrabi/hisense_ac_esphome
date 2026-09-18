@@ -7,6 +7,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/uart/uart.h"
 #include "protocol.h"
+#include "transport.h"
 
 namespace esphome {
 namespace hisense_ac {
@@ -16,7 +17,8 @@ enum Temperature_Unit {
     FAHRENHEIT = 1,
 };
 
-class HisenseAC : public PollingComponent, public climate::Climate, public uart::UARTDevice {
+class HisenseAC : public PollingComponent, public climate::Climate, public uart::UARTDevice,
+                  private transport::Listener {
 public:
     HisenseAC(uart::UARTComponent *parent);
     
@@ -32,7 +34,7 @@ public:
     void set_indoor_humidity_setting(sensor::Sensor *sensor);
     void set_indoor_humidity_status(sensor::Sensor *sensor);
     void set_display_switch(switch_::Switch *display_switch);
-    void set_display(bool state);
+    bool set_display(bool state);
 
     void setup() override;
     void loop() override;
@@ -54,23 +56,27 @@ public:
 
 private:
     const std::string trace_tag = "hisense_ac";
-    Temperature_Unit temp_unit;
+    Temperature_Unit temp_unit{CELSIUS};
     float heat_tgt_temp = 25.0f;
     float cool_tgt_temp = 25.0f;
     protocol::FrameParser parser_;
     DeviceStatus status_{};
-    bool wait_for_rx = false;
+    transport::Engine transport_{this};
+    bool has_status_{false};
+    uint32_t last_status_at_{0};
     switch_::Switch *display_switch_{nullptr};
     bool display_state_pending_{false};
     bool display_target_state_{false};
     uint32_t display_state_pending_since_{0};
+    uint32_t display_generation_{0};
     static constexpr uint32_t DISPLAY_STATE_TIMEOUT_MS = 10000;
 
     bool get_response(uint8_t input);
-    void blocking_send(uint8_t buf[], size_t sz);
+    bool send_packet(const uint8_t *data, size_t size) override;
+    void operation_finished(uint32_t generation, transport::Result result, const transport::Request &request) override;
+    void apply_status_();
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);
-    void set_temp(float temp);
 };
 
 class HisenseACDisplaySwitch : public switch_::Switch {

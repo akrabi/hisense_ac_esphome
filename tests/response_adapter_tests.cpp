@@ -1,66 +1,80 @@
 #include "test_support.h"
+#include "hisense_ac.h"
+#include "commands.h"
 
-static uint32_t clock_ms = 0;
-static uint32_t millis() { return clock_ms; }
-#define ESP_LOGD(...) ((void)0)
+uint32_t esphome::test_clock = 0;
+using namespace esphome;
+using namespace esphome::hisense_ac;
 
-// The adapter body is extracted at configure time from hisense_ac.cpp. Only
-// ESPHome logging/clock and the class shell are replaced at this test boundary.
-class HisenseAC {
-public:
-    protocol::FrameParser parser_;
-    DeviceStatus status_{};
-    bool wait_for_rx{true};
-    bool get_response(uint8_t input);
-};
-#include "response_method.inc"
-
-static unsigned deliver(HisenseAC &ac, const Bytes &bytes) {
-    unsigned accepted = 0;
-    for (auto byte : bytes) {
-        accepted += ac.get_response(byte);
-        ++clock_ms;
-    }
-    return accepted;
+void receive(HisenseAC &ac, uart::UARTComponent &bus, Bytes decoded, uint32_t at) {
+    test_clock = at;
+    auto packet = wire(decoded);
+    bus.rx.insert(bus.rx.end(), packet.begin(), packet.end());
+    ac.loop();
 }
 
 int main() {
-    HisenseAC ac;
-    CHECK(deliver(ac, {0, 0xFF, 0xFB}) == 0);
-    CHECK(ac.wait_for_rx);
-    auto malformed = capture();
+    uart::UARTComponent bus;
+    HisenseAC ac(&bus);
+    ac.set_temperature_unit(CELSIUS);
+    climate::ClimateCall call;
+    call.requested_mode = climate::CLIMATE_MODE_COOL;
+    call.requested_temperature = 23.4f;
+    call.requested_fan = climate::CLIMATE_FAN_HIGH;
+    ac.control(call);
+    CHECK(bus.tx.empty());  // Actual control() only enqueues a whole call.
+    ac.loop();
+    CHECK(bus.tx.size() == 1 && bus.tx[0][13] == 0x66);
+    auto status = capture();
+    auto malformed = status;
     malformed[20] ^= 1;
-    CHECK(deliver(ac, wire(malformed)) == 0);
-    CHECK(ac.wait_for_rx);
-    for (size_t length : {size_t(9), size_t(21), size_t(48), size_t(81), size_t(83),
-                          size_t(128), size_t(159), size_t(161), size_t(264)}) {
-        CHECK(deliver(ac, wire(synthetic(length))) == 0);
-        CHECK(ac.wait_for_rx);
-    }
-    auto unknown = synthetic();
-    unknown[13] = 0x65;
-    seal(unknown);
-    CHECK(deliver(ac, wire(unknown)) == 0);
-    CHECK(ac.wait_for_rx);
-    CHECK(deliver(ac, capture()) == 1);
-    CHECK(!ac.wait_for_rx && ac.status_.indoor_temperature_setting == 21);
-    ac.wait_for_rx = true;
-    unknown[19] = 30;
-    seal(unknown);
-    CHECK(deliver(ac, wire(unknown)) == 0);
-    CHECK(ac.wait_for_rx && ac.status_.indoor_temperature_setting == 21);
-    // A partial packet's timeout does not acknowledge anything.
-    CHECK(deliver(ac, {0xF4, 0xF5, 1, 0x40, 0x49, 0xF4}) == 0);
-    clock_ms += protocol::INTER_BYTE_TIMEOUT_MS;
-    ac.parser_.expire(clock_ms);
-    CHECK(ac.wait_for_rx);
-    CHECK(deliver(ac, capture()) == 1);
-    CHECK(!ac.wait_for_rx);
-    ac.wait_for_rx = true;
-    CHECK(deliver(ac, capture("issue_1_status_82_escaped.hex")) == 1);
-    CHECK(!ac.wait_for_rx && ac.status_.indoor_temperature_setting == 19);
-    ac.wait_for_rx = true;
-    CHECK(deliver(ac, capture("issue_6_status_160.hex")) == 1);
-    CHECK(!ac.wait_for_rx && ac.status_.indoor_temperature_setting == 16);
+    receive(ac, bus, malformed, 100);
+    CHECK(bus.tx.size() == 1);
+    auto unknown = synthetic(21);
+    receive(ac, bus, unknown, 150);
+    CHECK(bus.tx.size() == 1);
+    receive(ac, bus, status, 200);  // Off -> on prerequisite.
+    CHECK(bus.tx.size() == 2 && bus.tx[1] == Bytes(on, on + sizeof(on)));
+    status[18] = 0x38;
+    seal(status);
+    receive(ac, bus, status, 300);  // A control response is not confirmation.
+    CHECK(bus.tx.size() == 2);
+    test_clock = 800; ac.loop();
+    CHECK(bus.tx.size() == 3 && bus.tx.back()[13] == 0x66);
+    receive(ac, bus, status, 900);
+    CHECK(bus.tx.size() == 4 && bus.tx.back() == Bytes(mode_cool, mode_cool + CMD_SIZE));
+    test_clock = 1000; ac.loop();
+    test_clock = 1500; ac.loop();
+    CHECK(bus.tx.back()[13] == 0x66);
+    status[18] = 0x28; status[19] = 18; seal(status);
+    receive(ac, bus, status, 1600);
+    CHECK(bus.tx.back() == Bytes(temp_23_C, temp_23_C + CMD_SIZE));
+    test_clock = 1700; ac.loop();
+    test_clock = 2200; ac.loop();
+    status[19] = 23; seal(status);
+    receive(ac, bus, status, 2300);
+    CHECK(bus.tx.back() == Bytes(speed_max, speed_max + CMD_SIZE));
+
+    // Full queue: atomic rejection causes no requested-state publication.
+    uart::UARTComponent other_bus;
+    HisenseAC other(&other_bus);
+    climate::ClimateCall barrier;
+    barrier.requested_mode = climate::CLIMATE_MODE_OFF;
+    for (unsigned i = 0; i < 8; ++i) other.control(barrier);
+    const auto published = other.publications.size();
+    other.control(call);
+    CHECK(other.publications.size() == published);
+    CHECK(other_bus.tx.empty());
+    HisenseACDisplaySwitch display(&other);
+    display.control(true);
+    CHECK(display.publications.empty());
+    climate::ClimateCall invalid;
+    invalid.requested_temperature = NAN;
+    invalid.requested_mode = climate::CLIMATE_MODE_HEAT;
+    ac.control(invalid);
+    // Each instance has independent transport and RX state.
+    test_clock = 2400; other.loop();
+    CHECK(other_bus.tx.size() == 1);
+    CHECK(bus.tx.back() == Bytes(speed_max, speed_max + CMD_SIZE));
     return 0;
 }
