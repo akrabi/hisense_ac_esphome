@@ -1,6 +1,7 @@
 #include "test_support.h"
 #include "transport.h"
 #include "commands.h"
+#include "command_goldens.h"
 #include <utility>
 using namespace esphome::hisense_ac;
 
@@ -109,8 +110,38 @@ void swing_transitions() {
     CHECK(controls == 1);
 }
 
+void command_packet_lifetime() {
+    Host first_host, second_host;
+    transport::Engine first(&first_host), second(&second_host);
+    transport::Request request;
+    request.fields = transport::MODE | transport::TEMPERATURE;
+    request.mode = 1;
+    request.temperature = 16;
+    uint32_t generation;
+    CHECK(first.enqueue(request, 0, generation));
+    request.temperature = 27;
+    CHECK(second.enqueue(request, 0, generation));
+    first.tick(0); second.tick(0);
+    first.receive(state(), 100); second.receive(state(), 100);
+    // Both have built a deferred temperature step, but first send the mode.
+    request.fields = transport::TEMPERATURE;
+    request.temperature = 30;
+    CHECK(first.enqueue(request, 100, generation));
+    first.tick(100); second.tick(100);
+    CHECK(first_host.writes.back() == Bytes(mode_heat, mode_heat + CMD_SIZE));
+    tick(first, 101, 700); tick(second, 101, 700);
+    auto heat = state();
+    heat.mode_status = 1;
+    heat.indoor_temperature_setting = 18;
+    first.receive(heat, 700); second.receive(heat, 700);
+    first.tick(701); second.tick(701);
+    CHECK(first_host.writes.back() == Bytes(golden::temp_16_C, golden::temp_16_C + sizeof(golden::temp_16_C)));
+    CHECK(second_host.writes.back() == Bytes(golden::temp_27_C, golden::temp_27_C + sizeof(golden::temp_27_C)));
+}
+
 int main() {
     swing_transitions();
+    command_packet_lifetime();
     transport::Request temp;
     temp.fields = transport::TEMPERATURE; temp.temperature = 23;
     uint32_t generation;
@@ -135,7 +166,7 @@ int main() {
     CHECK(host.writes.size() == 1);
     engine.receive(state(), 100);
     engine.tick(100);
-    CHECK(host.writes.size() == 2 && host.writes.back() == Bytes(temp_24_C, temp_24_C + CMD_SIZE));
+    CHECK(host.writes.size() == 2 && host.writes.back() == Bytes(golden::temp_24_C, golden::temp_24_C + sizeof(golden::temp_24_C)));
     auto matching = state(); matching.indoor_temperature_setting = 24;
     engine.receive(matching, 120); // Stale/control response is not reconciliation.
     tick(engine, 101, 652);

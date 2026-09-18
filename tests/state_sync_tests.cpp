@@ -1,6 +1,7 @@
 #include "test_support.h"
 #include "hisense_ac.h"
 #include "commands.h"
+#include "command_goldens.h"
 #include "temperature.h"
 
 uint32_t esphome::test_clock = 0;
@@ -119,7 +120,7 @@ void generations_and_reconciliation() {
     rig.temperature(23);
     rig.ac.loop(); // Baseline query.
     rig.receive(Rig::report(), 200);
-    CHECK(rig.bus.tx.back() == Bytes(temp_23_C, temp_23_C + CMD_SIZE));
+    CHECK(rig.bus.tx.back() == Bytes(golden::temp_23_C, golden::temp_23_C + sizeof(golden::temp_23_C)));
     rig.temperature(26);
     CHECK(rig.ac.target_temperature == 26);
     rig.receive(Rig::report(0x28, 23), 250); // Setter response / old requested target.
@@ -129,7 +130,7 @@ void generations_and_reconciliation() {
     rig.receive(Rig::report(0x28, 23), 801); // Completes older generation, not newer overlay.
     CHECK(rig.ac.target_temperature == 26);
     rig.receive(Rig::report(0x28, 23), 900);
-    CHECK(rig.bus.tx.back() == Bytes(temp_26_C, temp_26_C + CMD_SIZE));
+    CHECK(rig.bus.tx.back() == Bytes(golden::temp_26_C, golden::temp_26_C + sizeof(golden::temp_26_C)));
     rig.receive(Rig::report(0x28, 23), 1000);
     CHECK(rig.ac.target_temperature == 26);
     rig.until(1500);
@@ -194,7 +195,7 @@ void stable_targets_and_atomic_rejection() {
     rig.receive(Rig::report(0x18, 16), 250); // Interim mode side-effect setpoint.
     rig.until(800);
     rig.receive(Rig::report(0x18, 16), 801);
-    CHECK(rig.bus.tx.back() == Bytes(temp_27_C, temp_27_C + CMD_SIZE));
+    CHECK(rig.bus.tx.back() == Bytes(golden::temp_27_C, golden::temp_27_C + sizeof(golden::temp_27_C)));
     rig.until(1400);
     rig.receive(Rig::report(0x18, 27), 1401);
     rig.mode(climate::CLIMATE_MODE_COOL); // Restore stable cool 22, not interim 16.
@@ -203,7 +204,7 @@ void stable_targets_and_atomic_rejection() {
     CHECK(rig.bus.tx.back() == Bytes(mode_cool, mode_cool + CMD_SIZE));
     rig.until(2100);
     rig.receive(Rig::report(0x28, 16), 2101);
-    CHECK(rig.bus.tx.back() == Bytes(temp_22_C, temp_22_C + CMD_SIZE));
+    CHECK(rig.bus.tx.back() == Bytes(golden::temp_22_C, golden::temp_22_C + sizeof(golden::temp_22_C)));
 
     Rig full(true);
     full.prime();
@@ -304,7 +305,7 @@ void temperature_units() {
     memory.receive(Rig::report(0x28, 72, 77), 200);
     memory.until(800);
     memory.receive(Rig::report(0x18, 61, 77), 801);
-    CHECK(memory.bus.tx.back() == Bytes(temp_77_F, temp_77_F + CMD_SIZE));
+    CHECK(memory.bus.tx.back() == Bytes(golden::temp_77_F, golden::temp_77_F + sizeof(golden::temp_77_F)));
     memory.until(1400);
     memory.receive(Rig::report(0x18, 77, 77), 1401);
     memory.mode(climate::CLIMATE_MODE_COOL);
@@ -312,7 +313,7 @@ void temperature_units() {
     memory.receive(Rig::report(0x18, 77, 77), 1500);
     memory.until(2100);
     memory.receive(Rig::report(0x28, 61, 77), 2101);
-    CHECK(memory.bus.tx.back() == Bytes(temp_72_F, temp_72_F + CMD_SIZE));
+    CHECK(memory.bus.tx.back() == Bytes(golden::temp_72_F, golden::temp_72_F + sizeof(golden::temp_72_F)));
 }
 
 int main() {

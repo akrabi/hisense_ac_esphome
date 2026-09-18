@@ -1,6 +1,7 @@
 #include "test_support.h"
 #include "hisense_ac.h"
 #include "commands.h"
+#include "command_goldens.h"
 
 uint32_t esphome::test_clock = 0;
 using namespace esphome;
@@ -48,7 +49,7 @@ int main() {
     CHECK(bus.tx.back()[13] == 0x66);
     status[18] = 0x28; status[19] = 18; seal(status);
     receive(ac, bus, status, 1600);
-    CHECK(bus.tx.back() == Bytes(temp_23_C, temp_23_C + CMD_SIZE));
+    CHECK(bus.tx.back() == Bytes(golden::temp_23_C, golden::temp_23_C + sizeof(golden::temp_23_C)));
     test_clock = 1700; ac.loop();
     test_clock = 2200; ac.loop();
     status[19] = 23; seal(status);

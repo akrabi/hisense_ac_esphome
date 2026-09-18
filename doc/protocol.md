@@ -281,8 +281,47 @@ Fahrenheit setpoints are rounded to whole Fahrenheit degrees before transmission
 optimistic state shows that representable value converted back to Celsius.
 Invalid/non-finite or out-of-range requests are rejected before integer conversion.
 
-The command tables encode 16-32 C and 61-90 F. Default visual limits remain
+The temperature commands encode 16-32 C and 61-90 F. Default visual limits remain
 16-30 C in Celsius mode. Fahrenheit mode uses 61-86 F expressed in Celsius
 (approximately 16.111-30 C), with a 5/9 C step. The component does not change the
 AC's temperature-display unit. Auxiliary temperatures retain their existing
 protocol interpretation; they are not assumed to switch units with the setpoint.
+
+## Bounded command encoding
+
+`encode_temperature(int device_temperature, bool fahrenheit, CommandPacket &out)`
+replaces the 47 repetitive temperature arrays with one immutable 44-byte decoded
+body template. Its input is the already-normalized integer **device-unit** value;
+Celsius normalization/conversion remains at the transport boundary. Only body
+offset 17 (full decoded frame offset 19) changes to `2 * value + 1`. All other
+body bytes are retained verbatim from the original commands, not reconstructed
+from guessed flag meanings. Inputs outside 16–32 C or 61–90 F return false.
+
+`encode_command(body, body_size, output, capacity, size)` accepts the existing
+decoded `00 40 length payload...` command body, without delimiters/checksum.
+It validates the declared length, sums unsigned decoded body bytes once, emits
+the big-endian checksum and doubles interior `F4` bytes. It preflights the entire
+escaped wire length against caller capacity and `MAX_COMMAND_WIRE_SIZE` (64).
+Invalid input or overflow returns false, sets output size to zero and leaves
+output bytes unchanged; commands are never truncated. Local staging also
+supports overlapping input/output buffers.
+
+The result is 50 decoded bytes for every temperature command. The original
+16 C checksum is `01 F4`, so its wire packet remains **51 bytes**, ending in
+`01 F4 F4 F4 FB`. All 77 original command fixtures independently check the common
+encoder; temperature fixtures also check the temperature builder, and the other
+30 packets remain immutable arrays, including unused variants. No unused command
+is activated or assigned new semantics by this refactor.
+
+Each transport Engine owns its temperature packet. Deferred mode-plus-temperature
+steps reference that instance-owned buffer until the active operation completes;
+queued requests contain values only and cannot overwrite it. Engines are
+non-copyable to keep these internal pointers valid. Regression tests interleave
+two engines and queue a newer temperature while an earlier temperature step
+waits for mode confirmation.
+
+The original `tests/fixtures/commands.json` is not regenerated from production.
+Native golden headers are generated from that independent snapshot only.
+Additional synthetic tests cover unsigned high-bit bytes, escaped payload and
+checksum bytes, exact/insufficient capacity, a full 64-byte wire packet, overflow,
+invalid lengths/types/temperatures and unchanged output on failure.

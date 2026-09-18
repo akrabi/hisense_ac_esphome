@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -8,10 +9,7 @@ FIXTURES = json.loads(
 )
 
 
-@pytest.mark.parametrize("name,wire", FIXTURES.items())
-def test_original_command_integrity(name, wire):
-    assert wire[:2] == [0xF4, 0xF5]
-    assert wire[-2:] == [0xF4, 0xFB]
+def unstuff_interior(wire):
     decoded = []
     index = 2
     while index < len(wire) - 2:
@@ -19,11 +17,39 @@ def test_original_command_integrity(name, wire):
         decoded.append(byte)
         index += 1
         if byte == 0xF4:
-            assert wire[index] == 0xF4, name
+            assert wire[index] == 0xF4
             index += 1
+    return decoded
+
+
+@pytest.mark.parametrize("name,wire", FIXTURES.items())
+def test_original_command_integrity(name, wire):
+    assert wire[:2] == [0xF4, 0xF5]
+    assert wire[-2:] == [0xF4, 0xFB]
+    decoded = unstuff_interior(wire)
     assert len(decoded) + 4 == decoded[2] + 9
     assert sum(decoded[:-2]) == (decoded[-2] << 8) | decoded[-1]
     assert len(wire) == (51 if name == "temp_16_C" else 50)
+
+
+def test_temperature_template_evidence():
+    """Verify the common-body claim from the old snapshots, not from the encoder."""
+    bodies = []
+    count = 0
+    for name, wire in FIXTURES.items():
+        match = re.fullmatch(r"temp_(\d+)_([CF])", name)
+        if match is None:
+            continue
+        value, unit = match.groups()
+        value = int(value)
+        assert 16 <= value <= 32 if unit == "C" else 61 <= value <= 90
+        body = unstuff_interior(wire)[:-2]
+        assert len(body) == 44 and body[:3] == [0, 0x40, 0x29]
+        assert body[17] == value * 2 + 1
+        body[17] = 0
+        bodies.append(body)
+        count += 1
+    assert count == 47 and all(body == bodies[0] for body in bodies)
 
 
 def test_upstream_status_capture_integrity():
