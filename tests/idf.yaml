@@ -1,0 +1,9 @@
+packages:
+  full: !include full.yaml
+
+esphome:
+  name: hisense-test-idf
+
+esp32:
+  framework:
+    type: esp-idf

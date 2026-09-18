@@ -18,6 +18,7 @@ By replacing the existing Hisense module with our custom one we achieve better r
   - Multiple temperature sensors
   - Indoor humidity monitoring
   - System status tracking
+  - Optional communication health, status age and error counters
 
 ## Hardware
 
@@ -60,9 +61,14 @@ climate:
 
 Feel free to submit issues and pull requests on GitHub.
 
-See [regression tests](tests/README.md) for credential-free ESP32 Arduino builds
-and native tests, and [UART protocol evidence](doc/protocol.md) for supported
+See [regression tests](tests/README.md) for credential-free ESP32 Arduino/ESP-IDF
+builds and native tests, and [UART protocol evidence](doc/protocol.md) for supported
 response layouts and remaining model-specific verification gaps.
+
+The development dependency baseline is ESPHome 2026.8.2. CI covers both ESP32
+framework configurations and two independent AC instances. Hardware timing,
+additional model capabilities, and named fault/preset feedback still require
+device-specific evidence.
 
 ## Acknowledgments
 

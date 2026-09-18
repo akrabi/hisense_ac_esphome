@@ -1,0 +1,36 @@
+esphome:
+  name: hisense-test-two
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+logger:
+  baud_rate: 0
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+uart:
+  - id: first_uart
+    tx_pin: GPIO17
+    rx_pin: GPIO16
+    baud_rate: 9600
+  - id: second_uart
+    tx_pin: GPIO25
+    rx_pin: GPIO26
+    baud_rate: 9600
+climate:
+  - platform: hisense_ac
+    id: first_ac
+    name: First AC
+    uart_id: first_uart
+    display:
+      name: First display
+  - platform: hisense_ac
+    id: second_ac
+    name: Second AC
+    uart_id: second_uart
+    temperature_unit: FAHRENHEIT
+    display:
+      name: Second display
