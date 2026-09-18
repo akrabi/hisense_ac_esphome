@@ -34,7 +34,7 @@ foreach(test IN ITEMS protocol_tests protocol_unsigned_tests response_adapter_te
   endif()
   add_executable("${test}" "${source}.cpp" "${COMPONENT}/protocol.cpp")
   target_include_directories("${test}" PRIVATE "${COMPONENT}" "${CMAKE_CURRENT_BINARY_DIR}")
-  target_compile_definitions("${test}" PRIVATE FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/status_82.hex")
+  target_compile_definitions("${test}" PRIVATE FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
   add_test(NAME "${test}" COMMAND "${test}")
 endforeach()
 if(MSVC)

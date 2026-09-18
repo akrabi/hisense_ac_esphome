@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #define CHECK(condition) do { \
@@ -16,14 +17,14 @@ using Bytes = std::vector<uint8_t>;
 using esphome::hisense_ac::DeviceStatus;
 namespace protocol = esphome::hisense_ac::protocol;
 
-inline Bytes capture() {
-    std::ifstream input(FIXTURE_PATH);
+inline Bytes capture(const char *name = "status_82.hex") {
+    std::ifstream input(std::string(FIXTURE_DIR) + "/" + name);
     CHECK(input.good());
     Bytes result;
     unsigned byte;
     while (input >> std::hex >> byte)
         result.push_back(static_cast<uint8_t>(byte));
-    CHECK(result.size() == 82);
+    CHECK(!result.empty());
     return result;
 }
 

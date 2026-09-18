@@ -35,3 +35,27 @@ def test_upstream_status_capture_integrity():
     assert wire[13] == 0x66
     assert wire[-2:] == bytes([0xF4, 0xFB])
     assert sum(wire[2:-4]) == int.from_bytes(wire[-4:-2], "big") == 0x04C3
+
+
+@pytest.mark.parametrize("name,wire_size,decoded_size,checksum", [
+    ("issue_1_status_82_escaped.hex", 83, 82, 0x049B),
+    ("issue_6_status_160.hex", 160, 160, 0x09BA),
+])
+def test_public_issue_capture_integrity(name, wire_size, decoded_size, checksum):
+    wire = bytes.fromhex((Path(__file__).parent / "fixtures" / name).read_text())
+    assert len(wire) == wire_size
+    decoded = bytearray(wire[:2])
+    index = 2
+    while index < len(wire) - 2:
+        byte = wire[index]
+        decoded.append(byte)
+        index += 1
+        if byte == 0xF4:
+            assert wire[index] == 0xF4
+            index += 1
+    decoded.extend(wire[-2:])
+    assert len(decoded) == decoded_size == decoded[4] + 9
+    assert decoded[:4] == bytes.fromhex("f4 f5 01 40")
+    assert decoded[5:16] == bytes.fromhex("01 00 fe 01 01 01 01 00 66 00 01")
+    assert decoded[-2:] == bytes.fromhex("f4 fb")
+    assert sum(decoded[2:-4]) == int.from_bytes(decoded[-4:-2], "big") == checksum

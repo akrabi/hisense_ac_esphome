@@ -33,11 +33,17 @@ pending response or overwrite the retained snapshot.
 
 Coverage includes every capture fragmentation/truncation position, concatenated
 packets, header overlap, noise, payload/checksum stuffing, high-bit data, checksum
-and footer errors, every in-capacity length, all oversized length bytes, full
-capacity with stuffing, timeout boundaries and clock rollover, interleaved
+and footer errors, all 256 declared lengths (9–264 decoded bytes), an
+unrepresentable 265-byte frame, inconsistent declared lengths, full capacity
+with stuffing, timeout boundaries and clock rollover, interleaved
 instances, explicit signed decoding, all mode/swing/display masks, and 100,000
 deterministic noise bytes. These replace the foundation commit's known-bug
-characterization tests.
+characterization tests. Both issue captures below are tested at every wire
+fragmentation boundary, individually and concatenated. Synthetic nonzero final
+payload bytes at lengths 82, 160 and 264 must participate in the checksum;
+checksums calculated using the historical off-by-one boundary are rejected.
+The larger bound also permits a valid escaped high checksum byte, which is
+explicitly covered.
 
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
@@ -52,6 +58,27 @@ specific indoor unit/module producing this log is not identified: this is
 upstream-reported hardware traffic, not validation on our hardware. Independently
 checked facts: 82 decoded bytes, length byte `0x49`, response header `01 40`,
 class byte 13 `0x66`, and additive checksum `0x04c3`.
+
+Additional packet-only public fixtures (retrieved 2026-09-18 through read-only
+`gh api repos/akrabi/hisense_ac_esphome/issues/{number}`):
+
+| Fixture | Source location | Wire / decoded bytes | Checksum |
+| --- | --- | --- | --- |
+| `fixtures/issue_1_status_82_escaped.hex` | [Issue #1 body](https://github.com/akrabi/hisense_ac_esphome/issues/1), first RX at `19:31:05` | 83 / 82 | `049B` |
+| `fixtures/issue_6_status_160.hex` | [Issue #6 body](https://github.com/akrabi/hisense_ac_esphome/issues/6), first two consecutive RX fragments at `18:28:36` | 160 / 160 | `09BA` |
+
+Issue #1 reports a Hisense mini apple pie unit with AEH-W4E1; issue #6 reports
+an ADT-09UX4RBL8 ducted unit without identifying its original Wi-Fi module.
+These are reporter-provided identifiers, not independently verified hardware.
+Issue metadata `updated_at` at retrieval: #1 `2025-05-30T20:31:41Z`, #6
+`2025-09-04T13:52:04Z`. Only hexadecimal packet bytes are stored, not complete
+logs, configurations, personal identifiers or attachments.
+
+The two captures have identical 16-byte header layouts except the declared
+length. Explicit integrity tests independently verify length, stuffing and
+`sum(decoded[2:-4])`; native tests exercise the actual production parser and
+shared-prefix decoder. Support for these receive layouts does not establish
+model-specific capabilities or the meanings of the opaque extended tail.
 
 Other frame classes, status variants, unused wire flags, and acknowledgment
 correlation require separate evidence. State publication and swing transition
