@@ -11,18 +11,6 @@ const uint8_t STATUS_QUERY[] = {
     0xF4,0xF5,0x00,0x40,0x0C,0x00,0x00,0x01,0x01,0xFE,0x01,
     0x00,0x00,0x66,0x00,0x00,0x00,0x01,0xB3,0xF4,0xFB
 };
-const uint8_t *const CELSIUS_COMMANDS[] = {
-    temp_16_C,temp_17_C,temp_18_C,temp_19_C,temp_20_C,temp_21_C,temp_22_C,
-    temp_23_C,temp_24_C,temp_25_C,temp_26_C,temp_27_C,temp_28_C,temp_29_C,
-    temp_30_C,temp_31_C,temp_32_C
-};
-const uint8_t *const FAHRENHEIT_COMMANDS[] = {
-    temp_61_F,temp_62_F,temp_63_F,temp_64_F,temp_65_F,temp_66_F,temp_67_F,
-    temp_68_F,temp_69_F,temp_70_F,temp_71_F,temp_72_F,temp_73_F,temp_74_F,
-    temp_75_F,temp_76_F,temp_77_F,temp_78_F,temp_79_F,temp_80_F,temp_81_F,
-    temp_82_F,temp_83_F,temp_84_F,temp_85_F,temp_86_F,temp_87_F,temp_88_F,
-    temp_89_F,temp_90_F
-};
 Request field(uint8_t mask, const Request &source) {
     Request result = source;
     result.fields = mask;
@@ -104,9 +92,8 @@ bool Engine::build_steps_() {
             uint8_t encoded;
             float normalized;
             if (!temperature::normalize(r.temperature, r.fahrenheit, normalized, encoded)) return false;
-            const auto *data = r.fahrenheit ? FAHRENHEIT_COMMANDS[encoded - 61] :
-                                             CELSIUS_COMMANDS[encoded - 16];
-            if (!add_step_(data, !r.fahrenheit && encoded == 16 ? CMD_SIZE + 1 : CMD_SIZE,
+            if (!encode_temperature(encoded, r.fahrenheit, temperature_packet_)) return false;
+            if (!add_step_(temperature_packet_.data, temperature_packet_.size,
                            field(TEMPERATURE, r), mode_guard)) return false;
         }
     }

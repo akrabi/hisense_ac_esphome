@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "device_status.h"
+#include "commands.h"
 
 namespace esphome {
 namespace hisense_ac {
@@ -10,7 +11,7 @@ namespace transport {
 enum Field : uint8_t { MODE = 1, TEMPERATURE = 2, FAN = 4, SWING = 8, PRESET = 16, FIELD_DISPLAY = 32, POWER = 64 };
 constexpr uint8_t MODE_OFF = 4;
 constexpr size_t QUEUE_CAPACITY = 8;
-constexpr size_t MAX_PACKET_SIZE = 64;
+constexpr size_t MAX_PACKET_SIZE = MAX_COMMAND_WIRE_SIZE;
 constexpr uint32_t RESPONSE_TIMEOUT_MS = 500;
 constexpr uint32_t OPERATION_TIMEOUT_MS = 10000;
 
@@ -37,6 +38,8 @@ public:
 class Engine {
 public:
     explicit Engine(Listener *listener) : listener_(listener) {}
+    Engine(const Engine &) = delete;
+    Engine &operator=(const Engine &) = delete;
     bool enqueue(const Request &request, uint32_t now, uint32_t &generation);
     void request_poll();
     void tick(uint32_t now);
@@ -58,6 +61,9 @@ private:
     size_t count_{0};
     Operation current_{};
     Step steps_[MAX_STEPS]{};
+    // One temperature step per logical operation. Never rebuild this packet
+    // while that operation is in flight; queued intents contain values only.
+    CommandPacket temperature_packet_{};
     size_t step_count_{0};
     size_t step_{0};
     DeviceStatus status_{};
