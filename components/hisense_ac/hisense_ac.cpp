@@ -62,20 +62,20 @@ bool HisenseAC::set_display(bool state) {
     uint32_t generation;
     if (!transport_.enqueue(request, millis(), generation)) {
         ESP_LOGW("hisense_ac", "Display request rejected: operation queue full.");
+        operation_warning_ = true;
+        update_warning_();
         return false;
     }
-    display_generation_ = generation;
-    display_state_pending_ = true;
-    display_target_state_ = state;
-    display_state_pending_since_ = millis();
+    accepted_(request, generation);
     return true;
 }
 
 void HisenseACDisplaySwitch::write_state(bool state) {
-    if (parent_->set_display(state)) publish_state(state);
+    parent_->set_display(state);
 }
 
 void HisenseAC::setup() {
+    started_at_ = millis();
     for (auto *sensor : {compressor_frequency, compressor_frequency_setting, compressor_frequency_send,
                         outdoor_temperature, outdoor_condenser_temperature, compressor_exhaust_temperature,
                         target_exhaust_temperature, indoor_pipe_temperature, indoor_humidity_setting,
@@ -83,19 +83,29 @@ void HisenseAC::setup() {
         if (sensor != nullptr) sensor->set_state_class(sensor::STATE_CLASS_MEASUREMENT);
     }
     request_update();
+    update_warning_();
 }
 
 void HisenseAC::loop() {
     parser_.expire(millis());
+    if (pending_.expire(millis())) {
+        presentation_dirty_ = optimistic_;
+        operation_warning_ = true;
+        request_update();
+        ESP_LOGW("hisense_ac", "Pending state expired without confirmation.");
+    }
     // Bound RX work so a noisy line cannot starve deadlines or other components.
     for (size_t budget = 0; budget < 512 && available(); ++budget) {
         if (get_response(read())) apply_status_();
     }
     transport_.tick(millis());
-    if (display_state_pending_ && millis() - display_state_pending_since_ >= DISPLAY_STATE_TIMEOUT_MS) {
-        display_state_pending_ = false;
-        ESP_LOGW("hisense_ac", "Display confirmation expired.");
-    }
+    uint64_t stale = static_cast<uint64_t>(get_update_interval()) * 3;
+    if (stale < 10000) stale = 10000;
+    if (stale > 0x7FFFFFFF) stale = 0x7FFFFFFF;
+    if (static_cast<uint32_t>(millis() - (has_status_ ? last_status_at_ : started_at_)) >= stale)
+        communication_warning_ = true;
+    update_warning_();
+    if (presentation_dirty_) publish_presentation_();
 }
 
 bool HisenseAC::get_response(uint8_t input) {
@@ -107,6 +117,7 @@ bool HisenseAC::get_response(uint8_t input) {
     }
     has_status_ = true;
     last_status_at_ = millis();
+    communication_warning_ = false;
     transport_.receive(status_, last_status_at_);
     return true;
 }
@@ -115,6 +126,14 @@ bool HisenseAC::send_packet(const uint8_t *data, size_t size) {
     // Final YAML validation requires this backend and exclusive ownership.
     auto *backend = static_cast<uart::IDFUARTComponent *>(parent_);
     if (size > transport::MAX_PACKET_SIZE || backend->is_failed()) return false;
+#if defined(USE_ESP32) && SOC_UART_LP_NUM >= 1
+    // Some ESP32 variants also expose a smaller LP UART. Do not apply the
+    // high-power FIFO assumption to whichever UART ESPHome actually assigned.
+    if (backend->get_hw_serial_number() >= SOC_UART_HP_NUM && size > SOC_LP_UART_FIFO_LEN) {
+        ESP_LOGW("hisense_ac", "Assigned LP UART FIFO is too small for this packet; transmission refused.");
+        return false;
+    }
+#endif
     const uint32_t started = millis();
     write_array(data, size);
     if (millis() - started >= 10)
@@ -124,62 +143,71 @@ bool HisenseAC::send_packet(const uint8_t *data, size_t size) {
 
 void HisenseAC::operation_finished(uint32_t generation, transport::Result result,
                                   const transport::Request &request) {
-    if (result == transport::Result::UNVERIFIED)
+    (void) request;
+    const bool changed = pending_.complete(generation);
+    presentation_dirty_ |= changed && optimistic_;
+    if (result == transport::Result::UNVERIFIED) {
         ESP_LOGW("hisense_ac", "Preset bytes sent; preset feedback is unverified, not confirmed.");
-    else if (result != transport::Result::CONFIRMED && result != transport::Result::SUPERSEDED) {
+        operation_warning_ = true;
+    } else if (result == transport::Result::CONFIRMED) {
+        if (generation == latest_generation_) operation_warning_ = false;
+    } else if (result != transport::Result::SUPERSEDED) {
         ESP_LOGW("hisense_ac", "Operation %u ended without confirmation (reason %u).",
                  static_cast<unsigned>(generation), static_cast<unsigned>(result));
-        status_set_warning("AC operation not confirmed");
+        if (generation == 0) communication_warning_ = true;
+        else operation_warning_ = true;
     }
-    if ((request.fields & transport::FIELD_DISPLAY) && generation == display_generation_ &&
-        result != transport::Result::SUPERSEDED)
-        display_state_pending_ = false;
 }
 
 void HisenseAC::apply_status_() {
-    float target = status_.indoor_temperature_setting;
-    float current = status_.indoor_temperature_status;
+    const float target = status_.indoor_temperature_setting;
+    const float current = status_.indoor_temperature_status;
+    bool unknown = false;
     if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
-        (temp_unit == FAHRENHEIT && target > 45 && target < 91))
-        target_temperature = target;
+        (temp_unit == FAHRENHEIT && target > 45 && target < 91)) {
+        confirmed_.temperature = status_.indoor_temperature_setting;
+        confirmed_.fields |= transport::TEMPERATURE;
+    } else unknown = true;
     if ((temp_unit == CELSIUS && current > 1 && current < 49) ||
         (temp_unit == FAHRENHEIT && current > 34 && current < 120))
-        current_temperature = current;
+        reported_current_ = current;
+    else unknown = true;
     const bool running = status_.compressor_frequency > 0;
     if (status_.run_status == 0) {
-        mode = climate::CLIMATE_MODE_OFF;
-        action = climate::CLIMATE_ACTION_OFF;
-    } else {
+        confirmed_.mode = transport::MODE_OFF;
+        confirmed_.fields |= transport::MODE;
+        reported_action_ = climate::CLIMATE_ACTION_OFF;
+        has_reported_action_ = true;
+    } else if (status_.mode_status <= 3) {
+        confirmed_.mode = status_.mode_status;
+        confirmed_.fields |= transport::MODE;
+        has_reported_action_ = true;
         switch (status_.mode_status) {
-            case 0: mode = climate::CLIMATE_MODE_FAN_ONLY; action = climate::CLIMATE_ACTION_FAN; break;
-            case 1: mode = climate::CLIMATE_MODE_HEAT; action = running ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE; break;
-            case 2: mode = climate::CLIMATE_MODE_COOL; action = running ? climate::CLIMATE_ACTION_COOLING : climate::CLIMATE_ACTION_IDLE; break;
-            case 3: mode = climate::CLIMATE_MODE_DRY; action = running ? climate::CLIMATE_ACTION_DRYING : climate::CLIMATE_ACTION_IDLE; break;
+            case 0: reported_action_ = climate::CLIMATE_ACTION_FAN; break;
+            case 1: reported_action_ = running ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE; break;
+            case 2: reported_action_ = running ? climate::CLIMATE_ACTION_COOLING : climate::CLIMATE_ACTION_IDLE; break;
+            case 3: reported_action_ = running ? climate::CLIMATE_ACTION_DRYING : climate::CLIMATE_ACTION_IDLE; break;
         }
-    }
-    swing_mode = status_.left_right ? (status_.up_down ? climate::CLIMATE_SWING_BOTH : climate::CLIMATE_SWING_HORIZONTAL) :
-                                    (status_.up_down ? climate::CLIMATE_SWING_VERTICAL : climate::CLIMATE_SWING_OFF);
+    } else unknown = true;
+    confirmed_.swing = (status_.left_right ? 1 : 0) | (status_.up_down ? 2 : 0);
+    confirmed_.display = status_.back_led;
+    confirmed_.fields |= transport::SWING | transport::FIELD_DISPLAY;
     switch (status_.wind_status) {
-        case 0: fan_mode = climate::CLIMATE_FAN_AUTO; break;
-        case 2: fan_mode = climate::CLIMATE_FAN_QUIET; break;
-        case 10: fan_mode = climate::CLIMATE_FAN_LOW; break;
-        case 14: fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
-        case 18: fan_mode = climate::CLIMATE_FAN_HIGH; break;
+        case 0: case 2: case 10: case 14: case 18:
+            confirmed_.fan = status_.wind_status;
+            confirmed_.fields |= transport::FAN;
+            break;
+        default: unknown = true; break;
     }
-    // back_led is verified only on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1.
-    if (display_switch_ != nullptr &&
-        (!display_state_pending_ || status_.back_led == display_target_state_)) {
-        display_state_pending_ = false;
-        display_switch_->publish_state(status_.back_led);
+    if (unknown && (!has_unknown_warning_ || millis() - unknown_warning_at_ >= 30000)) {
+        has_unknown_warning_ = true;
+        unknown_warning_at_ = millis();
+        ESP_LOGW("hisense_ac", "Unsupported status fields: mode=%u fan=%u target=%u current=%u; retaining known fields.",
+                 status_.mode_status, status_.wind_status, status_.indoor_temperature_setting,
+                 status_.indoor_temperature_status);
     }
-    if (!transport_.busy()) save_target_temperture();
-}
-
-void HisenseAC::request_update() { transport_.request_poll(); }
-
-void HisenseAC::update() {
-    request_update();
-    publish_state();
+    if (!unknown && !transport_.busy() && !(pending_.fields() & (transport::MODE | transport::TEMPERATURE)))
+        save_target_temperture();
     set_sensor(compressor_frequency, status_.compressor_frequency);
     set_sensor(compressor_frequency_setting, status_.compressor_frequency_setting);
     set_sensor(compressor_frequency_send, status_.compressor_frequency_send);
@@ -190,6 +218,66 @@ void HisenseAC::update() {
     set_sensor(indoor_pipe_temperature, status_.indoor_pipe_temperature);
     set_sensor(indoor_humidity_setting, status_.indoor_humidity_setting);
     set_sensor(indoor_humidity_status, status_.indoor_humidity_status);
+    publish_presentation_();
+}
+
+void HisenseAC::publish_presentation_() {
+    presentation_dirty_ = false;
+    const auto shown = pending_.present(confirmed_, optimistic_);
+    // back_led is verified only on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1.
+    if (display_switch_ != nullptr && (shown.fields & transport::FIELD_DISPLAY))
+        display_switch_->publish_state(shown.display);
+    if (shown.fields & transport::TEMPERATURE) target_temperature = shown.temperature;
+    else target_temperature = NAN;
+    current_temperature = reported_current_;
+    fan_mode.reset();
+    if (shown.fields & transport::FAN) {
+        switch (shown.fan) {
+            case 0: fan_mode = climate::CLIMATE_FAN_AUTO; break;
+            case 2: fan_mode = climate::CLIMATE_FAN_QUIET; break;
+            case 10: fan_mode = climate::CLIMATE_FAN_LOW; break;
+            case 14: fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
+            case 18: fan_mode = climate::CLIMATE_FAN_HIGH; break;
+        }
+    }
+    if (shown.fields & transport::SWING) {
+        const climate::ClimateSwingMode swings[] = {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_HORIZONTAL,
+                                                    climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_BOTH};
+        swing_mode = swings[shown.swing];
+    }
+    preset.reset(); // Never fabricate a confirmed preset from unverified bits.
+    if (shown.fields & transport::PRESET) {
+        const climate::ClimatePreset presets[] = {climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_BOOST,
+                                                 climate::CLIMATE_PRESET_ECO};
+        preset = presets[shown.preset];
+    }
+    if (has_reported_action_) action = reported_action_;
+    // Climate mode/action have no unknown representation. Before the first
+    // report, keep measurements unpublished rather than synthesizing Off.
+    if (!(shown.fields & transport::MODE) || !has_reported_action_) return;
+    const climate::ClimateMode modes[] = {climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_HEAT,
+                                          climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_DRY,
+                                          climate::CLIMATE_MODE_OFF};
+    mode = modes[shown.mode];
+    publish_state();
+}
+
+void HisenseAC::update_warning_() {
+    if (operation_warning_) status_set_warning("AC operation not confirmed");
+    else if (communication_warning_) status_set_warning("Waiting for valid AC status");
+    else status_clear_warning();
+}
+
+void HisenseAC::accepted_(const transport::Request &request, uint32_t generation) {
+    latest_generation_ = generation;
+    pending_.accept(request, generation, millis());
+    if (optimistic_) publish_presentation_();
+}
+
+void HisenseAC::request_update() { transport_.request_poll(); }
+
+void HisenseAC::update() {
+    request_update();
 }
 
 void HisenseAC::control(const climate::ClimateCall &call) {
@@ -200,10 +288,11 @@ void HisenseAC::control(const climate::ClimateCall &call) {
         request.fields |= transport::MODE;
         valid &= encode_mode(*call.get_mode(), request.mode);
     }
+    const float remembered = request.mode == 1 ? heat_tgt_temp : cool_tgt_temp;
     if (call.get_target_temperature().has_value() ||
-        ((request.fields & transport::MODE) && (request.mode == 1 || request.mode == 2))) {
+        ((request.fields & transport::MODE) && (request.mode == 1 || request.mode == 2) && std::isfinite(remembered))) {
         const float target = call.get_target_temperature().has_value() ? *call.get_target_temperature() :
-                             request.mode == 1 ? heat_tgt_temp : cool_tgt_temp;
+                             remembered;
         valid &= std::isfinite(target) && target >= (request.fahrenheit ? 61 : 16) &&
                  target <= (request.fahrenheit ? 90 : 32);
         if (valid) {
@@ -231,20 +320,25 @@ void HisenseAC::control(const climate::ClimateCall &call) {
     uint32_t generation;
     if (!valid || !transport_.enqueue(request, millis(), generation)) {
         ESP_LOGW("hisense_ac", "Climate call rejected: invalid controls or full operation queue.");
+        operation_warning_ = true;
+        update_warning_();
         return;
     }
-    // Compatibility presentation retained here; state-sync changes the default.
-    if (call.get_mode().has_value()) mode = *call.get_mode();
-    if (request.fields & transport::TEMPERATURE) target_temperature = request.temperature;
-    if (call.get_fan_mode().has_value()) fan_mode = *call.get_fan_mode();
-    if (call.get_swing_mode().has_value()) swing_mode = *call.get_swing_mode();
-    if (call.get_preset().has_value()) preset = *call.get_preset();
-    publish_state();
+    if (call.get_target_temperature().has_value()) {
+        const auto context = pending_.present(confirmed_, true);
+        const auto memory_mode = (request.fields & transport::MODE) ? request.mode :
+                                 (context.fields & transport::MODE) ? context.mode : transport::MODE_OFF;
+        if (memory_mode == 1) heat_tgt_temp = request.temperature;
+        else if (memory_mode == 2) cool_tgt_temp = request.temperature;
+    }
+    accepted_(request, generation);
 }
 
 void HisenseAC::save_target_temperture() {
-    if (mode == climate::CLIMATE_MODE_COOL && target_temperature > 0) cool_tgt_temp = target_temperature;
-    else if (mode == climate::CLIMATE_MODE_HEAT && target_temperature > 0) heat_tgt_temp = target_temperature;
+    if ((confirmed_.fields & (transport::MODE | transport::TEMPERATURE)) != (transport::MODE | transport::TEMPERATURE))
+        return;
+    if (confirmed_.mode == 2) cool_tgt_temp = confirmed_.temperature;
+    else if (confirmed_.mode == 1) heat_tgt_temp = confirmed_.temperature;
 }
 
 void HisenseAC::set_sensor(sensor::Sensor *sensor, float value) {

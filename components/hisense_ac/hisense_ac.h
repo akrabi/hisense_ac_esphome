@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
@@ -8,6 +9,7 @@
 #include "esphome/components/uart/uart.h"
 #include "protocol.h"
 #include "transport.h"
+#include "pending_state.h"
 
 namespace esphome {
 namespace hisense_ac {
@@ -23,6 +25,7 @@ public:
     HisenseAC(uart::UARTComponent *parent);
     
     void set_temperature_unit(Temperature_Unit unit);
+    void set_optimistic(bool optimistic) { optimistic_ = optimistic; }
     void set_compressor_frequency(sensor::Sensor *sensor);
     void set_compressor_frequency_setting(sensor::Sensor *sensor);
     void set_compressor_frequency_send(sensor::Sensor *sensor);
@@ -57,24 +60,35 @@ public:
 private:
     const std::string trace_tag = "hisense_ac";
     Temperature_Unit temp_unit{CELSIUS};
-    float heat_tgt_temp = 25.0f;
-    float cool_tgt_temp = 25.0f;
+    float heat_tgt_temp = NAN;
+    float cool_tgt_temp = NAN;
     protocol::FrameParser parser_;
     DeviceStatus status_{};
     transport::Engine transport_{this};
     bool has_status_{false};
     uint32_t last_status_at_{0};
+    uint32_t started_at_{0};
+    bool optimistic_{false};
+    PendingState pending_;
+    transport::Request confirmed_{};
+    float reported_current_{NAN};
+    climate::ClimateAction reported_action_{climate::CLIMATE_ACTION_OFF};
+    bool has_reported_action_{false};
+    bool presentation_dirty_{false};
+    bool communication_warning_{true};
+    bool operation_warning_{false};
+    uint32_t latest_generation_{0};
+    uint32_t unknown_warning_at_{0};
+    bool has_unknown_warning_{false};
     switch_::Switch *display_switch_{nullptr};
-    bool display_state_pending_{false};
-    bool display_target_state_{false};
-    uint32_t display_state_pending_since_{0};
-    uint32_t display_generation_{0};
-    static constexpr uint32_t DISPLAY_STATE_TIMEOUT_MS = 10000;
 
     bool get_response(uint8_t input);
     bool send_packet(const uint8_t *data, size_t size) override;
     void operation_finished(uint32_t generation, transport::Result result, const transport::Request &request) override;
     void apply_status_();
+    void publish_presentation_();
+    void update_warning_();
+    void accepted_(const transport::Request &request, uint32_t generation);
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);
 };

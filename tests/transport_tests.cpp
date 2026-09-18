@@ -119,5 +119,34 @@ int main() {
     unsigned controls = 0;
     for (const auto &packet : toggle.writes) controls += packet[13] == 0x65;
     CHECK(controls == 1);
+
+    // Repeated unchanged status is not confirmation or proven rejection.
+    // Poll only within the 10 s bound; never retransmit the display command.
+    Host stale;
+    transport::Engine reconciliation(&stale);
+    transport::Request display;
+    display.fields = transport::FIELD_DISPLAY;
+    display.display = false;
+    CHECK(reconciliation.enqueue(display, 0, generation));
+    auto old_display = state(); old_display.back_led = true;
+    for (uint32_t now = 0; now <= 10000; ++now) {
+        reconciliation.tick(now);
+        if (now % 100 == 0) reconciliation.receive(old_display, now);
+    }
+    CHECK(!reconciliation.busy());
+    CHECK(stale.results.back().second == transport::Result::EXPIRED);
+    controls = 0;
+    for (const auto &packet : stale.writes) controls += packet[13] == 0x65;
+    CHECK(controls == 1 && stale.writes.size() <= 22);
+
+    Host transition;
+    transport::Engine transition_engine(&transition);
+    swing.swing = 2;
+    CHECK(transition_engine.enqueue(swing, 0, generation));
+    transition_engine.tick(0);
+    auto horizontal = state(); horizontal.left_right = true;
+    transition_engine.receive(horizontal, 100);
+    transition_engine.tick(100);
+    CHECK(transition.writes.back() == Bytes(hor_swing, hor_swing + CMD_SIZE));
     return 0;
 }
