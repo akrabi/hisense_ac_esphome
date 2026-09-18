@@ -3,10 +3,6 @@
 This project is a replacement hardware and a matching ESPHome external component for  Hisense Air Conditioners Wifi Module. While these Wifi modules allow control over the AC (even local only) with [integration to HA](https://github.com/deiger/AirCon), the module itself is highly unreliable.
 By replacing the existing Hisense module with our custom one we achieve better reliabilty, faster response time and additional information about the AC unit.
 
-## Disclaimer
-
-**USE AT YOUR OWN RISK**: This component is provided "as is" without warranty of any kind, express or implied. The author(s) and contributors of this component take no responsibility for any damage to your air conditioning unit, ESP32 device, or any other equipment that may occur as a result of using this component. By using this component, you acknowledge and agree that you are doing so at your own risk and that you will be solely responsible for any damage that may occur to your equipment.
-
 ## Features
 
 - **Basic Climate Control**
@@ -29,6 +25,8 @@ By replacing the existing Hisense module with our custom one we achieve better r
 A compatible AC unit with a Hisense Wifi Module (see [compatible devices](doc/hardware/COMPATIBLE_DEVICES.md) for tested models)
 
 ### Setup
+Hardware modifications are at your own risk. Read the [disclaimer](#disclaimer) before starting.
+
 See the [hardware](doc/hardware/README.md) documentation for further details.
 
 ## Configuration
@@ -58,6 +56,10 @@ Feel free to submit issues and pull requests on GitHub.
 ## Acknowledgments
 
 This project was built based on [esphome_airconintl](https://github.com/pslawinski/esphome_airconintl).
+
+## Disclaimer
+
+**USE AT YOUR OWN RISK**: This component is provided "as is" without warranty of any kind, express or implied. The author(s) and contributors of this component take no responsibility for any damage to your air conditioning unit, ESP32 device, or any other equipment that may occur as a result of using this component. By using this component, you acknowledge and agree that you are doing so at your own risk and that you will be solely responsible for any damage that may occur to your equipment.
 
 ## License
 
