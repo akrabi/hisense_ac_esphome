@@ -2,6 +2,10 @@
 
 For a full working example configuration see the configuration folder.
 
+The checked-in examples use a local component path relative to
+`doc/configuration/examples`. When copying them elsewhere, adjust that path or
+use the GitHub source below.
+
 ## Installation
 
 Add the external component to your ESPHome configuration:
@@ -16,16 +20,19 @@ external_components:
 ## Basic Configuration
 
 ```yaml
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+
 climate:
   - platform: hisense_ac
     name: "Air Conditioner"
+    uart_id: uart_bus
     temperature_unit: CELSIUS
     display:
       name: "Display"
-    uart:
-      tx_pin: GPIO16
-      rx_pin: GPIO17
-      baud_rate: 9600
 ```
 
 ## Full Configuration with All Sensors
@@ -75,9 +82,12 @@ climate:
 
 ### Required Configuration
 - **name** (*Required*, string): The name of the climate device
-- **temperature_unit** (*Optional*, string): The temperature unit to use. Can be `CELSIUS` or `FAHRENHEIT`. Defaults to `CELSIUS`
+- **temperature_unit** (*Optional*, string): The AC protocol's temperature unit. Can be `CELSIUS` or `FAHRENHEIT`. Defaults to `CELSIUS`. This is not the Home Assistant display-unit preference.
 - **display** (*Optional*, switch): Exposes the indoor unit display as a switch. Set `name` to enable it in Home Assistant.
-- **uart** (*Required*): UART bus configuration
+- **optimistic** (*Optional*, boolean): Defaults to `false`. When enabled, accepted climate and display requests appear immediately, then reconcile with device status.
+- **uart_id** (*Optional*, ID): Selects the top-level UART bus; required when multiple buses are configured. Each AC needs a dedicated bus.
+- **update_interval** (*Optional*, time): Status polling interval. Defaults to `5s`.
+- **uart** (*Required*, top-level configuration): UART bus configuration, separate from `climate`
   - **tx_pin** (*Required*, pin): TX pin
   - **rx_pin** (*Required*, pin): RX pin
   - **baud_rate** (*Required*, int): Baud rate (must be 9600)
@@ -87,6 +97,45 @@ All sensor configurations follow the same pattern and are optional:
 - **name** (*Required if sensor enabled*, string): Name of the sensor
 - **unit_of_measurement** (*Optional*, string): Unit for the sensor
 - **device_class** (*Optional*, string): Home Assistant device class
+
+Frequency sensors default to Hz/frequency, temperature sensors to Celsius/
+temperature, and humidity sensors to percent/humidity, all with measurement state
+class and zero decimal places. Standard ESPHome sensor options, including
+metadata overrides and filters, remain available. Metadata overrides alone do
+not convert measurement values.
+
+## State reporting and migration
+
+Earlier versions published requested controls immediately. The default is now
+**device-reported state**: commands are queued and the displayed state changes
+when valid status arrives. Use `optimistic: true` for immediate climate/display
+feedback. Measurements and compressor action always come from the AC.
+
+Pending requests have a bounded lifetime and failures raise a component warning.
+In optimistic mode, failure removes the pending state and restores the latest
+known report; if no report exists, the component does not invent a replacement.
+A timeout does not prove that the AC rejected a command. Controls, especially
+swing toggles, are never blindly retried. Preset commands remain available, but
+preset status bits are unverified: no confirmed preset is fabricated, and sending
+a preset raises an unverified-operation warning.
+
+Each AC requires its own native ESP32 UART, RX and TX, at 9600/8N1.
+Do not share the bus with other devices, `uart.write`, UART debug callbacks,
+manual lambdas that write to the UART, or UART logger output. Component-level
+`flow_control_pin`/RS485 direction management is not supported. These constraints
+allow complete short commands to fit the idle hardware FIFO without waiting for
+line transmission. No blocking flush is used. Arduino and ESP-IDF ESP32
+configurations use the IDF UART backend; other platforms/backends are not covered.
+
+`temperature_unit` must match the device's protocol units. Climate values are
+always Celsius internally; Home Assistant performs presentation conversion.
+Fahrenheit controls use whole Fahrenheit steps (5/9 C); their default visual
+range corresponds to 61-86 F. Celsius defaults remain 16-30 C. Visual overrides
+must stay within encodable limits and use whole protocol-degree boundaries and
+steps. The component does not change the AC's own display-unit setting.
+
+The display status bit is verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 only.
+Do not infer support on another model from the switch being configurable.
 
 # Example ESP32 Setup
 
@@ -100,8 +149,8 @@ esp32:
 # UART Configuration
 uart:
   id: uart_bus
-  tx_pin: GPIO16
-  rx_pin: GPIO17
+  tx_pin: GPIO17
+  rx_pin: GPIO16
   baud_rate: 9600
   data_bits: 8
   parity: NONE

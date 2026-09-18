@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
     ("parity", "parity NONE"),
     ("stop_bits", "1 stop bits"),
     ("data_bits", "8 data bits"),
+    ("missing_rx", "rx_pin"),
+    ("missing_tx", "tx_pin"),
 ])
 def test_reject_unsafe_uart(case, expected):
     config = yaml.safe_load((ROOT / "tests" / "minimal.yaml").read_text())
@@ -35,6 +37,8 @@ def test_reject_unsafe_uart(case, expected):
         config["uart"]["debug"] = {"dummy_receiver": True}
     elif case == "flow_control":
         config["uart"]["flow_control_pin"] = "GPIO18"
+    elif case in ("missing_rx", "missing_tx"):
+        config["uart"].pop("rx_pin" if case == "missing_rx" else "tx_pin")
     else:
         key, value = {
             "baud": ("baud_rate", 19200), "parity": ("parity", "EVEN"),

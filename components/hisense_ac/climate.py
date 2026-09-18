@@ -1,3 +1,5 @@
+import math
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
@@ -5,15 +7,18 @@ from esphome.core import CORE, ID
 from esphome.components import climate, uart, sensor, switch
 from esphome.const import (
     CONF_ID,
-    CONF_NAME,
-    CONF_UNIT_OF_MEASUREMENT,
-    CONF_DEVICE_CLASS,
+    CONF_VISUAL,
+    CONF_MIN_TEMPERATURE,
+    CONF_MAX_TEMPERATURE,
+    CONF_TEMPERATURE_STEP,
+    CONF_TARGET_TEMPERATURE,
     DEVICE_CLASS_TEMPERATURE,
     DEVICE_CLASS_HUMIDITY,
     DEVICE_CLASS_FREQUENCY,
     UNIT_CELSIUS,
     UNIT_HERTZ,
     UNIT_PERCENT,
+    STATE_CLASS_MEASUREMENT,
 )
 
 DEPENDENCIES = ['uart']
@@ -44,29 +49,58 @@ CONF_INDOOR_HUMIDITY_STATUS = 'indoor_humidity_status'
 CONF_DISPLAY = 'display'
 CONF_OPTIMISTIC = 'optimistic'
 
-SENSOR_CONFIG_SCHEMA = sensor.sensor_schema().extend({
-    cv.GenerateID(CONF_ID): cv.declare_id(sensor.Sensor),
-    cv.Required(CONF_NAME): cv.string,
-    cv.Optional(CONF_UNIT_OF_MEASUREMENT): cv.string,
-    cv.Optional(CONF_DEVICE_CLASS): cv.string,
-})
+FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_HERTZ, device_class=DEVICE_CLASS_FREQUENCY,
+    accuracy_decimals=0, state_class=STATE_CLASS_MEASUREMENT,
+)
+TEMPERATURE_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE,
+    accuracy_decimals=0, state_class=STATE_CLASS_MEASUREMENT,
+)
+HUMIDITY_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_PERCENT, device_class=DEVICE_CLASS_HUMIDITY,
+    accuracy_decimals=0, state_class=STATE_CLASS_MEASUREMENT,
+)
 
-CONFIG_SCHEMA = climate.climate_schema(HisenseAC).extend({
+
+def validate_visual(config):
+    visual = config.get(CONF_VISUAL, {})
+    fahrenheit = config[CONF_TEMP_UNIT] == "FAHRENHEIT"
+    minimum, maximum = ((61 - 32) * 5 / 9, (90 - 32) * 5 / 9) if fahrenheit else (16, 32)
+    step = 5 / 9 if fahrenheit else 1
+    for key in (CONF_MIN_TEMPERATURE, CONF_MAX_TEMPERATURE):
+        if key not in visual:
+            continue
+        value = visual[key]
+        device_value = value * 9 / 5 + 32 if fahrenheit else value
+        if not math.isfinite(value) or not minimum - 0.001 <= value <= maximum + 0.001:
+            raise cv.Invalid(f"{key} must be within the encodable Celsius range {minimum:g} to {maximum:g}")
+        if abs(device_value - round(device_value)) > 0.001:
+            raise cv.Invalid(f"{key} must represent a whole degree in the AC protocol unit")
+    target_step = visual.get(CONF_TEMPERATURE_STEP, {}).get(CONF_TARGET_TEMPERATURE, step)
+    if not math.isfinite(target_step) or target_step < step - 0.001 or abs(target_step / step - round(target_step / step)) > 0.001:
+        raise cv.Invalid("visual target temperature step must be a positive whole multiple of the AC protocol step")
+    if visual.get(CONF_MIN_TEMPERATURE, minimum) > visual.get(CONF_MAX_TEMPERATURE, 30):
+        raise cv.Invalid("visual minimum temperature must not exceed the maximum")
+    return config
+
+
+CONFIG_SCHEMA = cv.All(climate.climate_schema(HisenseAC).extend({
     cv.GenerateID(): cv.declare_id(HisenseAC),
     cv.Optional(CONF_TEMP_UNIT, default='CELSIUS'): cv.enum(TEMP_UNITS, upper=True),
     cv.Optional(CONF_OPTIMISTIC, default=False): cv.boolean,
-    cv.Optional(CONF_COMPRESSOR_FREQUENCY): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_COMPRESSOR_FREQUENCY_SETTING): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_COMPRESSOR_FREQUENCY_SEND): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_OUTDOOR_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_OUTDOOR_CONDENSER_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_COMPRESSOR_EXHAUST_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_TARGET_EXHAUST_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_INDOOR_PIPE_TEMPERATURE): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_INDOOR_HUMIDITY_SETTING): SENSOR_CONFIG_SCHEMA,
-    cv.Optional(CONF_INDOOR_HUMIDITY_STATUS): SENSOR_CONFIG_SCHEMA,
+    cv.Optional(CONF_COMPRESSOR_FREQUENCY): FREQUENCY_SENSOR_SCHEMA,
+    cv.Optional(CONF_COMPRESSOR_FREQUENCY_SETTING): FREQUENCY_SENSOR_SCHEMA,
+    cv.Optional(CONF_COMPRESSOR_FREQUENCY_SEND): FREQUENCY_SENSOR_SCHEMA,
+    cv.Optional(CONF_OUTDOOR_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+    cv.Optional(CONF_OUTDOOR_CONDENSER_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+    cv.Optional(CONF_COMPRESSOR_EXHAUST_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+    cv.Optional(CONF_TARGET_EXHAUST_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+    cv.Optional(CONF_INDOOR_PIPE_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+    cv.Optional(CONF_INDOOR_HUMIDITY_SETTING): HUMIDITY_SENSOR_SCHEMA,
+    cv.Optional(CONF_INDOOR_HUMIDITY_STATUS): HUMIDITY_SENSOR_SCHEMA,
     cv.Optional(CONF_DISPLAY): switch.switch_schema(HisenseACDisplaySwitch),
-}).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA)
+}).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA), validate_visual)
 
 
 def validate_exclusive_uart(config):
@@ -106,14 +140,10 @@ FINAL_VALIDATE_SCHEMA = cv.All(
 )
 
 
-async def setup_sensor(config, key, var_name, unit=None, device_class=None):
+async def setup_sensor(config, key, var_name):
     if key in config:
         conf = config[key]
         sens = await sensor.new_sensor(conf)
-        if unit:
-            sens.set_unit_of_measurement(unit)
-        if device_class:
-            sens.set_device_class(device_class)
         cg.add(getattr(var_name, f"set_{key}")(sens))
 
 async def to_code(config):
@@ -128,16 +158,14 @@ async def to_code(config):
     cg.add(var.set_optimistic(config[CONF_OPTIMISTIC]))
 
     # Setup sensors
-    await setup_sensor(config, CONF_COMPRESSOR_FREQUENCY, var, UNIT_HERTZ, DEVICE_CLASS_FREQUENCY)
-    await setup_sensor(config, CONF_COMPRESSOR_FREQUENCY_SETTING, var, UNIT_HERTZ, DEVICE_CLASS_FREQUENCY)
-    await setup_sensor(config, CONF_COMPRESSOR_FREQUENCY_SEND, var, UNIT_HERTZ, DEVICE_CLASS_FREQUENCY)
-    await setup_sensor(config, CONF_OUTDOOR_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
-    await setup_sensor(config, CONF_OUTDOOR_CONDENSER_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
-    await setup_sensor(config, CONF_COMPRESSOR_EXHAUST_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
-    await setup_sensor(config, CONF_TARGET_EXHAUST_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
-    await setup_sensor(config, CONF_INDOOR_PIPE_TEMPERATURE, var, UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE)
-    await setup_sensor(config, CONF_INDOOR_HUMIDITY_SETTING, var, UNIT_PERCENT, DEVICE_CLASS_HUMIDITY)
-    await setup_sensor(config, CONF_INDOOR_HUMIDITY_STATUS, var, UNIT_PERCENT, DEVICE_CLASS_HUMIDITY)
+    for key in (
+        CONF_COMPRESSOR_FREQUENCY, CONF_COMPRESSOR_FREQUENCY_SETTING,
+        CONF_COMPRESSOR_FREQUENCY_SEND, CONF_OUTDOOR_TEMPERATURE,
+        CONF_OUTDOOR_CONDENSER_TEMPERATURE, CONF_COMPRESSOR_EXHAUST_TEMPERATURE,
+        CONF_TARGET_EXHAUST_TEMPERATURE, CONF_INDOOR_PIPE_TEMPERATURE,
+        CONF_INDOOR_HUMIDITY_SETTING, CONF_INDOOR_HUMIDITY_STATUS,
+    ):
+        await setup_sensor(config, key, var)
 
     if CONF_DISPLAY in config:
         display_config = config[CONF_DISPLAY]
