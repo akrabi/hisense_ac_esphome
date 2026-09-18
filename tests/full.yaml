@@ -22,6 +22,7 @@ climate:
     name: Test AC
     uart_id: ac_uart
     temperature_unit: FAHRENHEIT
+    optimistic: true
     compressor_frequency:
       name: Compressor frequency
     compressor_frequency_setting:

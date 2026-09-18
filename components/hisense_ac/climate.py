@@ -42,6 +42,7 @@ CONF_INDOOR_PIPE_TEMPERATURE = 'indoor_pipe_temperature'
 CONF_INDOOR_HUMIDITY_SETTING = 'indoor_humidity_setting'
 CONF_INDOOR_HUMIDITY_STATUS = 'indoor_humidity_status'
 CONF_DISPLAY = 'display'
+CONF_OPTIMISTIC = 'optimistic'
 
 SENSOR_CONFIG_SCHEMA = sensor.sensor_schema().extend({
     cv.GenerateID(CONF_ID): cv.declare_id(sensor.Sensor),
@@ -53,6 +54,7 @@ SENSOR_CONFIG_SCHEMA = sensor.sensor_schema().extend({
 CONFIG_SCHEMA = climate.climate_schema(HisenseAC).extend({
     cv.GenerateID(): cv.declare_id(HisenseAC),
     cv.Optional(CONF_TEMP_UNIT, default='CELSIUS'): cv.enum(TEMP_UNITS, upper=True),
+    cv.Optional(CONF_OPTIMISTIC, default=False): cv.boolean,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY): SENSOR_CONFIG_SCHEMA,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY_SETTING): SENSOR_CONFIG_SCHEMA,
     cv.Optional(CONF_COMPRESSOR_FREQUENCY_SEND): SENSOR_CONFIG_SCHEMA,
@@ -123,6 +125,7 @@ async def to_code(config):
 
     # Initialize temperature unit
     cg.add(var.set_temperature_unit(config[CONF_TEMP_UNIT]))
+    cg.add(var.set_optimistic(config[CONF_OPTIMISTIC]))
 
     # Setup sensors
     await setup_sensor(config, CONF_COMPRESSOR_FREQUENCY, var, UNIT_HERTZ, DEVICE_CLASS_FREQUENCY)

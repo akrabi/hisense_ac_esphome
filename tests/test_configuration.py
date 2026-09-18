@@ -21,6 +21,7 @@ def test_configuration_codegen(fixture):
     ).read_text()
     assert "hisense_ac::HisenseAC(ac_uart)" in generated
     assert "set_uart_parent(" in generated
+    assert f"set_optimistic({'true' if fixture == 'full' else 'false'})" in generated
     if fixture == "full":
         for sensor in (
             "compressor_frequency", "compressor_frequency_setting",

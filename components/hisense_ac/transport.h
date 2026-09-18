@@ -66,6 +66,8 @@ private:
     bool baseline_poll_{false};
     bool unverified_{false};
     bool recovering_{false};
+    bool response_seen_{false};
+    uint8_t confirmation_polls_{0};
     uint32_t next_generation_{0};
     uint32_t deadline_{0};
     uint32_t tx_until_{0};

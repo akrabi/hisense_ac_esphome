@@ -114,7 +114,10 @@ bool Engine::build_steps_() {
     if (r.fields & SWING) {
         Request before = field(SWING, r);
         before.swing = swing(status_);
-        for (uint8_t axis : {uint8_t(2), uint8_t(1)}) {
+        // Preserve the existing horizontal-to-vertical command order.
+        const uint8_t first_axis = before.swing == 1 && r.swing == 2 ? 1 : 2;
+        const uint8_t axes[] = {first_axis, static_cast<uint8_t>(first_axis ^ 3)};
+        for (uint8_t axis : axes) {
             if ((before.swing ^ r.swing) & axis) {
                 auto after = before;
                 after.swing ^= axis;
@@ -144,6 +147,8 @@ bool Engine::send_(const uint8_t *data, size_t size, uint32_t now) {
 
 void Engine::poll_(uint32_t now) {
     poll_requested_ = false;
+    response_seen_ = false;
+    if (active_ && !baseline_poll_) ++confirmation_polls_;
     if (!send_(STATUS_QUERY, sizeof(STATUS_QUERY), now)) {
         finish_(Result::WRITE_FAILED, now);
         return;
@@ -224,7 +229,14 @@ void Engine::tick(uint32_t now) {
             if (due_(now, tx_until_)) phase_ = Phase::WAIT_STATUS;
             break;
         case Phase::WAIT_STATUS:
-            if (due_(now, deadline_)) finish_(Result::TIMEOUT, now);
+            if (due_(now, deadline_)) {
+                // A stale status is not rejection. Re-read (never resend the
+                // setter) within the operation's 10 s confirmation lifetime.
+                if (active_ && !baseline_poll_ && response_seen_ && confirmation_polls_ < 20)
+                    poll_(now);
+                else
+                    finish_(Result::TIMEOUT, now);
+            }
             break;
         case Phase::RECOVERY:
             if (due_(now, deadline_) && (!tx_started_ || due_(now, tx_until_))) {
@@ -239,9 +251,11 @@ void Engine::receive(const DeviceStatus &status, uint32_t now) {
     status_ = status;
     if (phase_ == Phase::POLL_DRAIN && due_(now, tx_until_)) phase_ = Phase::WAIT_STATUS;
     if (phase_ != Phase::WAIT_STATUS || due_(now, deadline_)) return;
+    response_seen_ = true;
     if (!active_) { finish_(Result::CONFIRMED, now); return; }
     if (static_cast<uint32_t>(now - current_.queued_at) >= OPERATION_TIMEOUT_MS) return;
     if (baseline_poll_) {
+        confirmation_polls_ = 0;
         if (!build_steps_()) { finish_(Result::UNSUPPORTED, now); return; }
         if (step_count_ == 0) { finish_(Result::CONFIRMED, now); return; }
         phase_ = Phase::CONTROL_READY;
@@ -253,6 +267,7 @@ void Engine::receive(const DeviceStatus &status, uint32_t now) {
             finish_(unverified_ ? Result::UNVERIFIED : Result::CONFIRMED, now);
         } else {
             ++step_;
+            confirmation_polls_ = 0;
             phase_ = Phase::CONTROL_READY;
         }
     }
