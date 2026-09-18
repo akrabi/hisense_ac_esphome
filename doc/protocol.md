@@ -264,10 +264,11 @@ Native tests link this production implementation. Generated frame builders in
 the tests are synthetic stimulus only; the independently retained public captures
 and all original command goldens anchor checksum/framing checks.
 
-## Deliberately unchanged
+## Swing control
 
-The queue remains synchronous/function-static, and existing polling publication,
-optimistic control behavior, display-confirmation policy, swing commands and
-temperature units are unchanged. The snapshot is initialized, but measurement
-publication before first valid status still needs the planned state-sync change.
-This parser milestone does not claim transport/state synchronization is fixed.
+All 16 transitions between Off, Vertical, Horizontal and Both are supported.
+Each axis uses a toggle command, so the component first reads the actual swing
+state and confirms each change before sending another. Desired states, not
+precomputed toggles, are queued. Commands are not blindly retried: if a response
+is lost or the remote changes an axis between steps, the operation fails with a
+warning and the component requests status instead of guessing.
