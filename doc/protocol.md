@@ -82,8 +82,10 @@ The decoder preserves only mappings used by the old component:
 
 These are **compatibility mappings**, not newly verified measurements.
 In particular, humidity meanings and compressor-field ordering are not proven
-across models. The existing backlight-bit verification applies only to
-ACOND ASTI-09UW4RVEDC00 / AEH-W4B1.
+across models. Display feedback through `back_led` (byte 37, mask `0x80`) is
+verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 and independently confirmed by the
+maintainer on another device. The latter confirmation did not identify a
+model/module, so it does not add a named compatibility entry.
 
 Unused fields from the removed packed wire struct remain **unverified**, not
 new capabilities: sleep, direction, somatosensory compensation, Fahrenheit and
@@ -113,7 +115,8 @@ Evidence labels:
 
 - **Used**: explicitly decoded by the component, preserving its existing mapping;
   this does not establish universal model support.
-- **Model-verified**: a specific observation with the model qualification stated.
+- **Verified**: confirmed through device observations, with the available evidence
+  stated; this does not mean every Hisense model has been tested.
 - **Historical**: original name/type/comment only; interpretation, units, encoding,
   polarity and applicability remain unverified. A field with a fault-like name
   is not necessarily an active-high fault indication.
@@ -182,7 +185,7 @@ No additional scaling or multi-byte value construction is implied.
 | 37 | `0x10` | `indoor_led` | Historical |
 | 37 | `0x20` | `indicate_led` | Historical |
 | 37 | `0x40` | `display_led` | Historical; not the observed display-state bit on the tested ACOND unit |
-| 37 | `0x80` | `back_led` | Used, model-verified for display state on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 only |
+| 37 | `0x80` | `back_led` | Used / verified; display state, confirmed on the ACOND unit and the maintainer's device (see evidence above) |
 | 38 | `0x01` | `indoor_eeprom` | Historical; EEPROM |
 | 38 | `0x02` | `sample` | Historical |
 | 38 | `0x3C` | `rev23` | Opaque; four reserved bits |

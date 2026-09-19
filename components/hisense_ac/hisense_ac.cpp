@@ -244,7 +244,7 @@ void HisenseAC::apply_status_() {
 void HisenseAC::publish_presentation_() {
     presentation_dirty_ = false;
     const auto shown = pending_.present(confirmed_, optimistic_);
-    // back_led is verified only on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1.
+    // back_led is verified on the ACOND unit and the maintainer's device; see doc/protocol.md.
     if (display_switch_ != nullptr && (shown.fields & transport::FIELD_DISPLAY))
         display_switch_->publish_state(shown.display);
     if (shown.fields & transport::TEMPERATURE) target_temperature = shown.temperature;

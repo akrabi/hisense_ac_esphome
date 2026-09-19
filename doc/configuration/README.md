@@ -134,8 +134,9 @@ range corresponds to 61-86 F. Celsius defaults remain 16-30 C. Visual overrides
 must stay within encodable limits and use whole protocol-degree boundaries and
 steps. The component does not change the AC's own display-unit setting.
 
-The display status bit is verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 only.
-Do not infer support on another model from the switch being configurable.
+The display status bit (`back_led`, byte 37, mask `0x80`) is verified on the
+ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 and the maintainer's device. This is not a
+guarantee that every model supports display control.
 
 ## Optional diagnostics and capabilities
 
