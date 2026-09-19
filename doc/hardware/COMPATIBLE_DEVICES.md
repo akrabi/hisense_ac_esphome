@@ -12,8 +12,10 @@ This document lists the Hisense AC models that have been tested and confirmed to
 
 These are existing community-reported compatibility entries, not a claim that
 every subsequent firmware change has been retested on each unit. Display
-feedback via status byte 37 bit `0x80` is verified only for the listed ACOND
-model/module.
+feedback via status byte 37 bit `0x80` is verified on the listed ACOND
+model/module and independently confirmed on the maintainer's device. The
+additional report did not identify its model/module, so it does not establish
+another named entry or universal compatibility.
 
 The parser also has public packet fixtures for 82-byte and 160-byte status
 responses. In particular, the ADT-09UX4RBL8 packet in
