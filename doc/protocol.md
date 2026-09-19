@@ -2,8 +2,8 @@
 
 ## Supported envelope
 
-The receive parser supports decoded frames of 9–264 bytes, covering every value
-of the one-byte declared payload length (`255 + 9` maximum):
+The receive parser supports decoded frames of 9–128 bytes. This bounded capacity
+covers the supported 82-byte status layout; larger packets are rejected:
 
 | Decoded offset | Meaning |
 | --- | --- |
@@ -17,8 +17,9 @@ of the one-byte declared payload length (`255 + 9` maximum):
 The checksum sums decoded offsets 2 through size − 5 inclusive. Interior `F4`
 bytes, including checksum bytes, must be doubled on the wire; each pair contributes
 one decoded byte and is summed only once. Header/footer markers are not stuffed.
-Wire size may be larger because of stuffing. The 264-byte decoded capacity is
-derived from the supported envelope, not from one model's observed response size.
+Wire size may be larger because of stuffing. The length field can theoretically
+represent up to 264 decoded bytes (`255 + 9`), but that does not establish another
+supported status format or require allocating its maximum size.
 
 Each component has its own fixed-capacity parser and decoded snapshot. Partial
 frames expire after **100 ms between consumed bytes**, using rollover-safe
@@ -30,10 +31,10 @@ and a new header beginning where an invalid footer was expected.
 
 ## Supported status layout
 
-Checksum-valid **82-byte and 160-byte** responses with **offset 13 = `0x66`**
-are decoded using only the existing shared status prefix (consumed fields end at
-offset 47). Both evidenced length and class are required. All other lengths
-remain framing-only: a longer valid envelope does not establish a status layout.
+Only checksum-valid **82-byte** responses with **offset 13 = `0x66`**
+are decoded as status (consumed fields end at offset 47). Both length and class
+are required. Other lengths within the parser's bound remain framing-only:
+a valid envelope does not establish a status layout.
 This is based on:
 
 - The historical component's wire struct: 16 header bytes, 56 status bytes,
@@ -46,15 +47,15 @@ This is based on:
 - [Issue #1](https://github.com/akrabi/hisense_ac_esphome/issues/1), first RX at
   `19:31:05`: 83 wire bytes decode to 82 bytes because payload byte 50 (`F4`) is
   doubled. Declared length `49`, checksum `04 9B`.
-- [Issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6), first RX at
-  `18:28:36`: the two consecutive RX log fragments form one 160-byte frame.
-  Declared length `97`, checksum `09 BA`. Its header offsets 0–15 match the
-  issue #1 header **except offset 4 (length)**; offsets 5–15 in both are
-  `01 00 FE 01 01 01 01 00 66 00 01`. There is no shifted/extra header byte before
-  the existing prefix at offset 16. These packet-only fixtures and provenance
-  are retained in [tests/README.md](../tests/README.md).
 
-This is receive-layout compatibility, **not a claim of model-specific control,
+The 160-byte ADT-09UX4RBL8 capture in
+[issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6) has valid framing
+and checksum (`09 BA`), but its status-field meanings and control compatibility
+are unverified. Matching header bytes do not prove a shared payload layout.
+That fixture is retained to test rejection without publishing guessed status;
+160-byte decoding is deliberately excluded from this branch.
+
+This is **not a claim of model-specific control,
 capability, sensor meaning or sentinel handling**. No tail fields are inferred
 from expanded fork structs; offsets after the consumed prefix remain opaque
 but are included in checksum verification through the final payload byte.
@@ -266,8 +267,8 @@ frame until the next `feed()` call. Consume or copy it before feeding more bytes
 component discard a stale partial frame even with no subsequent UART traffic.
 
 `protocol::decode_status(frame, size, DeviceStatus &out)` independently validates
-the complete envelope and the evidenced 82/160-byte layouts, then assigns only
-the shared prefix to the typed snapshot. On
+the complete envelope and the supported 82-byte layout, then assigns only
+consumed fields to the typed snapshot. On
 failure `out` is unchanged. It uses explicit unsigned masks, big-endian checksum
 decoding and signed arithmetic, never packed bitfields or a raw-buffer cast.
 

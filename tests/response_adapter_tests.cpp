@@ -34,6 +34,8 @@ int main() {
     auto unknown = synthetic(21);
     receive(ac, bus, unknown, 150);
     CHECK(bus.tx.size() == 1);
+    receive(ac, bus, capture("issue_6_status_160.hex"), 175);
+    CHECK(bus.tx.size() == 1 && ac.publications.empty());
     receive(ac, bus, status, 200);  // Off -> on prerequisite.
     CHECK(bus.tx.size() == 2 && bus.tx[1] == Bytes(on, on + sizeof(on)));
     status[18] = 0x38;

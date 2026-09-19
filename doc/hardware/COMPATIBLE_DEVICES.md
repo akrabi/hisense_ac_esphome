@@ -20,7 +20,9 @@ another named entry or universal compatibility.
 The parser also has public packet fixtures for 82-byte and 160-byte status
 responses. In particular, the ADT-09UX4RBL8 packet in
 [issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6) establishes a
-receive layout, **not full control compatibility**. See
+valid frame, **not a verified status layout or control compatibility**. The
+component rejects that 160-byte response; its fixture is a negative regression,
+not evidence of supported decoding. See
 [protocol evidence](../protocol.md) before adding a model based on a successful
 packet decode. No hybrid IR controller or zoffypal v3 model-specific support is
 included.
