@@ -56,25 +56,28 @@ void malformed_and_bounds() {
         CHECK(feed(parser, wire(bad), now) == 0);
         CHECK(feed(parser, good, now) == 1);
     }
-    // All 256 length-byte values now fit; only evidenced sizes decode status.
+    // Framing is bounded separately from the single supported status layout.
     for (size_t length = 9; length <= protocol::MAX_FRAME_SIZE; ++length) {
         const auto frame = synthetic(length);
         CHECK(feed(parser, wire(frame), now) == 1);
         DeviceStatus status;
-        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82 || length == 160));
+        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82));
     }
-    CHECK(protocol::MAX_FRAME_SIZE == 264);
+    for (size_t length = protocol::MAX_FRAME_SIZE + 1; length <= 264; ++length) {
+        CHECK(feed(parser, wire(synthetic(length)), now) == 0);
+        CHECK(feed(parser, good, now) == 1);
+    }
+    CHECK(protocol::MAX_FRAME_SIZE == 128);
     auto maximum = synthetic(protocol::MAX_FRAME_SIZE);
     std::fill(maximum.begin() + 5, maximum.end() - 4, 0xF4);
     seal(maximum);
     CHECK(feed(parser, wire(maximum), now) == 1);
     CHECK(std::memcmp(parser.data(), maximum.data(), maximum.size()) == 0);
 
-    // A 265-byte decoded candidate cannot be represented by one length byte.
-    // Keep LEN=255 and insert data before its checksum; never write past 264.
+    // Extra data must not overflow a full-capacity frame or overwrite status.
     auto oversized = synthetic(protocol::MAX_FRAME_SIZE);
     oversized.insert(oversized.end() - 4, 0);
-    CHECK(oversized.size() == 265 && oversized[4] == 255);
+    CHECK(oversized.size() == protocol::MAX_FRAME_SIZE + 1);
     CHECK(feed(parser, wire(oversized), now) == 0);
     CHECK(feed(parser, good, now) == 1);
     DeviceStatus unchanged;
@@ -100,18 +103,12 @@ void malformed_and_bounds() {
 
 void public_issue_captures() {
     const auto escaped = capture("issue_1_status_82_escaped.hex");
-    const auto extended = capture("issue_6_status_160.hex");
     CHECK(escaped.size() == 83 && escaped[50] == 0xF4 && escaped[51] == 0xF4);
-    CHECK(extended.size() == 160);
     Bytes unescaped = escaped;
     unescaped.erase(unescaped.begin() + 51);
     CHECK(unescaped.size() == 82);
-    // The two captured 16-byte envelopes differ only in their length byte.
-    for (size_t i = 0; i < 16; ++i)
-        CHECK(i == 4 || unescaped[i] == extended[i]);
-
-    for (const auto &packet : {escaped, extended}) {
-        const auto &expected = packet.size() == 83 ? unescaped : extended;
+    for (const auto &packet : {escaped, capture()}) {
+        const auto &expected = packet.size() == 83 ? unescaped : packet;
         for (size_t split = 0; split <= packet.size(); ++split) {
             protocol::FrameParser parser;
             uint32_t now = 0;
@@ -122,39 +119,35 @@ void public_issue_captures() {
             CHECK(std::memcmp(parser.data(), expected.data(), expected.size()) == 0);
             DeviceStatus status;
             CHECK(protocol::decode_status(parser.data(), expected.size(), status));
-            CHECK(status.mode_status == 3);
-            CHECK(status.indoor_temperature_setting == (packet.size() == 83 ? 19 : 16));
-            CHECK(status.indoor_temperature_status == (packet.size() == 83 ? 23 : 26));
-            CHECK(status.outdoor_temperature == (packet.size() == 83 ? 21 : 15));
-            CHECK(status.compressor_frequency_send == (packet.size() == 83 ? 0 : 255));
+            if (packet.size() == 83) {
+                CHECK(status.mode_status == 3);
+                CHECK(status.indoor_temperature_setting == 19);
+                CHECK(status.indoor_temperature_status == 23);
+                CHECK(status.outdoor_temperature == 21);
+                CHECK(status.compressor_frequency_send == 0);
+            }
         }
     }
     protocol::FrameParser parser;
     uint32_t now = 0;
     Bytes concatenated = escaped;
-    concatenated.insert(concatenated.end(), extended.begin(), extended.end());
     concatenated.insert(concatenated.end(), escaped.begin(), escaped.end());
-    CHECK(feed(parser, concatenated, now) == 3);
-    // Unknown extended tail is checksum-covered, not decoded into new fields.
-    auto changed_tail = extended;
-    std::fill(changed_tail.begin() + 48, changed_tail.end() - 4, 0xA5);
-    changed_tail[155] = 0x7F;
-    seal(changed_tail);
-    CHECK(feed(parser, wire(changed_tail), now) == 1);
+    CHECK(feed(parser, concatenated, now) == 2);
+    // Valid framing in an issue report does not establish its status mapping.
+    const auto unsupported = capture("issue_6_status_160.hex");
+    CHECK(unsupported.size() == 160);
+    CHECK(feed(parser, unsupported, now) == 0);
     DeviceStatus status;
-    CHECK(protocol::decode_status(parser.data(), changed_tail.size(), status));
-    CHECK(status.indoor_temperature_setting == 16 && status.outdoor_temperature == 15);
-    changed_tail[13] = 0x65;
-    seal(changed_tail);
-    CHECK(feed(parser, wire(changed_tail), now) == 1);
-    CHECK(!protocol::decode_status(parser.data(), changed_tail.size(), status));
-    CHECK(status.indoor_temperature_setting == 16);
+    status.indoor_temperature_setting = 23;
+    CHECK(!protocol::decode_status(unsupported.data(), unsupported.size(), status));
+    CHECK(status.indoor_temperature_setting == 23);
+    CHECK(feed(parser, escaped, now) == 1);
 }
 
 void checksum_end_boundary() {
     protocol::FrameParser parser;
     uint32_t now = 0;
-    for (size_t size : {size_t(82), size_t(160), size_t(264)}) {
+    for (size_t size : {size_t(82), protocol::MAX_FRAME_SIZE}) {
         auto frame = synthetic(size);
         frame[size - 5] = 0x7F;
         seal(frame);
@@ -167,13 +160,6 @@ void checksum_end_boundary() {
         CHECK(feed(parser, wire(frame), now) == 0);
         CHECK(feed(parser, capture(), now) == 1);
     }
-    // At the larger capacity a valid high checksum byte can also need stuffing.
-    auto high_checksum = synthetic(264);
-    std::fill(high_checksum.begin() + 5, high_checksum.end() - 4, 0xF4);
-    seal(high_checksum);
-    CHECK(high_checksum[260] == 0xF4);
-    CHECK(feed(parser, wire(high_checksum), now) == 1);
-    CHECK(std::memcmp(parser.data(), high_checksum.data(), high_checksum.size()) == 0);
 }
 
 void timeouts_and_instances() {
