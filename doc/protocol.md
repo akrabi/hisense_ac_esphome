@@ -96,7 +96,7 @@ and communication flags, electrical voltage/current fields, expansion threshold,
 outdoor-machine/four-way flags and reserved/extra bytes. Do not expose or decode
 them based solely on their historical names.
 
-## Historical complete status map
+## Complete status field reference
 
 This reference preserves the information from the packed `Device_Status` in
 commit `e65774a` (before its replacement with a decoded snapshot). It is not a
@@ -106,140 +106,148 @@ values; the parser still validates the entire frame, including unused bytes.
 
 Offsets below are **zero-based decoded frame offsets**, after removing byte
 stuffing, not positions in the escaped UART stream. They reconstruct the
-historical ESP32 layout with bitfields allocated from the least-significant bit
+original ESP32 layout with bitfields allocated from the least-significant bit
 upward. C++ bitfield ordering is implementation-dependent; this table must not be
 used to justify casting a byte buffer to a struct. In particular, the original
 byte 40 declaration used only seven bits; its eighth bit was unnamed padding.
 
-Evidence labels:
+Usage and verification are independent:
 
-- **Used**: explicitly decoded by the component, preserving its existing mapping;
-  this does not establish universal model support.
-- **Verified**: confirmed through device observations, with the available evidence
-  stated; this does not mean every Hisense model has been tested.
-- **Historical**: original name/type/comment only; interpretation, units, encoding,
-  polarity and applicability remain unverified. A field with a fault-like name
-  is not necessarily an active-high fault indication.
-- **Opaque**: reserved, unnamed or uninterpreted bytes/bits.
-- **Framing**: interpreted by frame validation rather than copied to `DeviceStatus`.
+- **Used**: decoded into `DeviceStatus` and consumed by the component.
+- **Unused**: documented but not decoded into `DeviceStatus`; not obsolete.
+- **Reserved**: reserved or unnamed bits/bytes without an assigned interpretation.
+- **Framing**: handled by frame validation rather than copied to `DeviceStatus`.
+
+Verification describes the available evidence, not whether the code uses a field:
+
+- **Verified**: confirmed through device observations or captured frames, with the
+  available evidence stated; not a claim that every Hisense model has been tested.
+- **Unverified**: mapping retained from the original struct without field-specific
+  confirmation recorded here. This includes used compatibility mappings.
+- **Unknown**: no established meaning.
+- **Partial**: only some fields within a grouped area have established meanings.
+
+A field with a fault-like name is not necessarily an active-high fault indication.
+Units, scaling and polarity must not be inferred solely from its name or usage.
 
 For bitfields, the mask identifies bits before shifting. All are unsigned;
-single-bit fields express a historical flag, not a verified boolean meaning.
+single-bit fields express an originally named flag, not necessarily a verified
+boolean meaning.
 `u8` and `s8` denote the original unsigned and signed byte interpretations.
 No additional scaling or multi-byte value construction is implied.
 
 ### Header and primary status
 
-| Offset | Mask / original type | Original field | Evidence / historical description |
-| --- | --- | --- | --- |
-| 0-15 | `uint8_t[16]` | `header` | Framing/header area; see envelope and class checks above. Not all header bytes have established meanings. |
-| 16 | u8 | `wind_status` | Used; fan/air-volume code |
-| 17 | u8 | `sleep_status` | Historical; sleep code |
-| 18 | `0x03` | `direction_status` | Historical; wind direction |
-| 18 | `0x0C` | `run_status` | Used; run bits, shifted right 2 |
-| 18 | `0xF0` | `mode_status` | Used; operating mode, shifted right 4 |
-| 19 | u8 | `indoor_temperature_setting` | Used; target temperature |
-| 20 | u8 | `indoor_temperature_status` | Used; room temperature |
-| 21 | u8 | `indoor_pipe_temperature` | Used; pipe temperature |
-| 22 | s8 | `indoor_humidity_setting` | Used; historical humidity setting interpretation |
-| 23 | s8 | `indoor_humidity_status` | Used; historical humidity reading interpretation |
-| 24 | u8 | `somatosensory_temperature` | Historical; sensible temperature |
-| 25 | `0x07` | `somatosensory_compensation_ctrl` | Historical; compensation control |
-| 25 | `0xF8` | `somatosensory_compensation` | Historical; compensation value |
-| 26 | `0x07` | `temperature_Fahrenheit` | Historical; Fahrenheit display field, not verified protocol-unit detection |
-| 26 | `0xF8` | `temperature_compensation` | Historical; temperature compensation |
-| 27 | u8 | `timer` | Historical; timer |
-| 28 | u8 | `hour` | Historical; hour |
-| 29 | u8 | `minute` | Historical; minute |
-| 30 | u8 | `poweron_hour` | Historical; power-on hour |
-| 31 | u8 | `poweron_minute` | Historical; power-on minute |
-| 32 | u8 | `poweroff_hour` | Historical; power-off hour |
-| 33 | u8 | `poweroff_minute` | Historical; power-off minute |
-| 34 | `0x0F` | `wind_door` | Historical; wind-door field |
-| 34 | `0xF0` | `drying` | Historical; drying field |
+| Offset | Mask / original type | Original field | Usage | Verification | Description |
+| --- | --- | --- | --- | --- | --- |
+| 0-15 | `uint8_t[16]` | `header` | Framing | Partial | See envelope and class checks above; not all header bytes have established meanings |
+| 16 | u8 | `wind_status` | Used | Unverified | Fan/air-volume code |
+| 17 | u8 | `sleep_status` | Unused | Unverified | Sleep code |
+| 18 | `0x03` | `direction_status` | Unused | Unverified | Wind direction |
+| 18 | `0x0C` | `run_status` | Used | Unverified | Run bits, shifted right 2 |
+| 18 | `0xF0` | `mode_status` | Used | Unverified | Operating mode, shifted right 4 |
+| 19 | u8 | `indoor_temperature_setting` | Used | Unverified | Target temperature |
+| 20 | u8 | `indoor_temperature_status` | Used | Unverified | Room temperature |
+| 21 | u8 | `indoor_pipe_temperature` | Used | Unverified | Pipe temperature |
+| 22 | s8 | `indoor_humidity_setting` | Used | Unverified | Retained humidity setting interpretation |
+| 23 | s8 | `indoor_humidity_status` | Used | Unverified | Retained humidity reading interpretation |
+| 24 | u8 | `somatosensory_temperature` | Unused | Unverified | Sensible temperature |
+| 25 | `0x07` | `somatosensory_compensation_ctrl` | Unused | Unverified | Compensation control |
+| 25 | `0xF8` | `somatosensory_compensation` | Unused | Unverified | Compensation value |
+| 26 | `0x07` | `temperature_Fahrenheit` | Unused | Unverified | Fahrenheit display field, not verified protocol-unit detection |
+| 26 | `0xF8` | `temperature_compensation` | Unused | Unverified | Temperature compensation |
+| 27 | u8 | `timer` | Unused | Unverified | Timer |
+| 28 | u8 | `hour` | Unused | Unverified | Hour |
+| 29 | u8 | `minute` | Unused | Unverified | Minute |
+| 30 | u8 | `poweron_hour` | Unused | Unverified | Power-on hour |
+| 31 | u8 | `poweron_minute` | Unused | Unverified | Power-on minute |
+| 32 | u8 | `poweroff_hour` | Unused | Unverified | Power-off hour |
+| 33 | u8 | `poweroff_minute` | Unused | Unverified | Power-off minute |
+| 34 | `0x0F` | `wind_door` | Unused | Unverified | Wind-door field |
+| 34 | `0xF0` | `drying` | Unused | Unverified | Drying field |
 
 ### Feature, display and diagnostic flags
 
-| Offset | Mask | Original field | Evidence / historical description |
-| --- | --- | --- | --- |
-| 35 | `0x01` | `dual_frequency` | Historical |
-| 35 | `0x02` | `efficient` | Historical |
-| 35 | `0x04` | `low_electricity` | Historical; save electricity |
-| 35 | `0x08` | `low_power` | Historical; energy saving |
-| 35 | `0x10` | `heat` | Historical; heating air |
-| 35 | `0x20` | `nature` | Historical; natural wind |
-| 35 | `0x40` | `left_right` | Used; horizontal swing |
-| 35 | `0x80` | `up_down` | Used; vertical swing |
-| 36 | `0x01` | `smoke` | Historical; smoke removal |
-| 36 | `0x02` | `voice` | Historical |
-| 36 | `0x04` | `mute` | Historical |
-| 36 | `0x08` | `smart_eye` | Historical |
-| 36 | `0x10` | `outdoor_clear` | Historical; outdoor cleaning |
-| 36 | `0x20` | `indoor_clear` | Historical; indoor cleaning |
-| 36 | `0x40` | `swap` | Historical; change the wind |
-| 36 | `0x80` | `dew` | Historical; fresh |
-| 37 | `0x01` | `indoor_electric` | Historical |
-| 37 | `0x02` | `right_wind` | Historical |
-| 37 | `0x04` | `left_wind` | Historical |
-| 37 | `0x08` | `filter_reset` | Historical |
-| 37 | `0x10` | `indoor_led` | Historical |
-| 37 | `0x20` | `indicate_led` | Historical |
-| 37 | `0x40` | `display_led` | Historical; not the observed display-state bit on the tested ACOND unit |
-| 37 | `0x80` | `back_led` | Used / verified; display state, confirmed on the ACOND unit and the maintainer's device (see evidence above) |
-| 38 | `0x01` | `indoor_eeprom` | Historical; EEPROM |
-| 38 | `0x02` | `sample` | Historical |
-| 38 | `0x3C` | `rev23` | Opaque; four reserved bits |
-| 38 | `0x40` | `time_lapse` | Historical |
-| 38 | `0x80` | `auto_check` | Historical; self-test |
-| 39 | `0x01` | `indoor_outdoor_communication` | Historical |
-| 39 | `0x02` | `indoor_zero_voltage` | Historical |
-| 39 | `0x04` | `indoor_bars` | Historical |
-| 39 | `0x08` | `indoor_machine_run` | Historical |
-| 39 | `0x10` | `indoor_water_pump` | Historical |
-| 39 | `0x20` | `indoor_humidity_sensor` | Historical |
-| 39 | `0x40` | `indoor_temperature_pipe_sensor` | Historical |
-| 39 | `0x80` | `indoor_temperature_sensor` | Historical |
-| 40 | `0x07` | `rev25` | Opaque; three reserved bits |
-| 40 | `0x08` | `eeprom_communication` | Historical |
-| 40 | `0x10` | `electric_communication` | Historical |
-| 40 | `0x20` | `keypad_communication` | Historical |
-| 40 | `0x40` | `display_communication` | Historical |
-| 40 | `0x80` | (unnamed) | Opaque; unused bit in the original declaration |
+| Offset | Mask | Original field | Usage | Verification | Description |
+| --- | --- | --- | --- | --- | --- |
+| 35 | `0x01` | `dual_frequency` | Unused | Unverified | Meaning not confirmed |
+| 35 | `0x02` | `efficient` | Unused | Unverified | Meaning not confirmed |
+| 35 | `0x04` | `low_electricity` | Unused | Unverified | Save electricity |
+| 35 | `0x08` | `low_power` | Unused | Unverified | Energy saving |
+| 35 | `0x10` | `heat` | Unused | Unverified | Heating air |
+| 35 | `0x20` | `nature` | Unused | Unverified | Natural wind |
+| 35 | `0x40` | `left_right` | Used | Unverified | Horizontal swing |
+| 35 | `0x80` | `up_down` | Used | Unverified | Vertical swing |
+| 36 | `0x01` | `smoke` | Unused | Unverified | Smoke removal |
+| 36 | `0x02` | `voice` | Unused | Unverified | Meaning not confirmed |
+| 36 | `0x04` | `mute` | Unused | Unverified | Meaning not confirmed |
+| 36 | `0x08` | `smart_eye` | Unused | Unverified | Meaning not confirmed |
+| 36 | `0x10` | `outdoor_clear` | Unused | Unverified | Outdoor cleaning |
+| 36 | `0x20` | `indoor_clear` | Unused | Unverified | Indoor cleaning |
+| 36 | `0x40` | `swap` | Unused | Unverified | Change the wind |
+| 36 | `0x80` | `dew` | Unused | Unverified | Fresh |
+| 37 | `0x01` | `indoor_electric` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x02` | `right_wind` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x04` | `left_wind` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x08` | `filter_reset` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x10` | `indoor_led` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x20` | `indicate_led` | Unused | Unverified | Meaning not confirmed |
+| 37 | `0x40` | `display_led` | Unused | Unverified | Not the observed display-state bit on the tested ACOND unit |
+| 37 | `0x80` | `back_led` | Used | Verified | Display state; confirmed on the ACOND unit and the maintainer's device (see evidence above) |
+| 38 | `0x01` | `indoor_eeprom` | Unused | Unverified | EEPROM |
+| 38 | `0x02` | `sample` | Unused | Unverified | Meaning not confirmed |
+| 38 | `0x3C` | `rev23` | Reserved | Unknown | Four reserved bits |
+| 38 | `0x40` | `time_lapse` | Unused | Unverified | Meaning not confirmed |
+| 38 | `0x80` | `auto_check` | Unused | Unverified | Self-test |
+| 39 | `0x01` | `indoor_outdoor_communication` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x02` | `indoor_zero_voltage` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x04` | `indoor_bars` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x08` | `indoor_machine_run` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x10` | `indoor_water_pump` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x20` | `indoor_humidity_sensor` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x40` | `indoor_temperature_pipe_sensor` | Unused | Unverified | Meaning not confirmed |
+| 39 | `0x80` | `indoor_temperature_sensor` | Unused | Unverified | Meaning not confirmed |
+| 40 | `0x07` | `rev25` | Reserved | Unknown | Three reserved bits |
+| 40 | `0x08` | `eeprom_communication` | Unused | Unverified | Meaning not confirmed |
+| 40 | `0x10` | `electric_communication` | Unused | Unverified | Meaning not confirmed |
+| 40 | `0x20` | `keypad_communication` | Unused | Unverified | Meaning not confirmed |
+| 40 | `0x40` | `display_communication` | Unused | Unverified | Meaning not confirmed |
+| 40 | `0x80` | (unnamed) | Reserved | Unknown | Unused bit in the original declaration |
 
 ### Compressor, electrical fields and trailing data
 
-| Offset | Mask / original type | Original field | Evidence / historical description |
-| --- | --- | --- | --- |
-| 41 | u8 | `compressor_frequency` | Used; compressor frequency |
-| 42 | u8 | `compressor_frequency_setting` | Used; compressor frequency setting |
-| 43 | u8 | `compressor_frequency_send` | Used; sent compressor frequency |
-| 44 | s8 | `outdoor_temperature` | Used |
-| 45 | s8 | `outdoor_condenser_temperature` | Used |
-| 46 | s8 | `compressor_exhaust_temperature` | Used |
-| 47 | s8 | `target_exhaust_temperature` | Used |
-| 48 | u8 | `expand_threshold` | Historical; expansion threshold |
-| 49 | u8 | `UAB_HIGH` | Historical; named high byte, unverified units/scaling |
-| 50 | u8 | `UAB_LOW` | Historical; named low byte |
-| 51 | u8 | `UBC_HIGH` | Historical; named high byte |
-| 52 | u8 | `UBC_LOW` | Historical; named low byte |
-| 53 | u8 | `UCA_HIGH` | Historical; named high byte |
-| 54 | u8 | `UCA_LOW` | Historical; named low byte |
-| 55 | u8 | `IAB` | Historical |
-| 56 | u8 | `IBC` | Historical |
-| 57 | u8 | `ICA` | Historical |
-| 58 | u8 | `generatrix_voltage_high` | Historical; named high byte |
-| 59 | u8 | `generatrix_voltage_low` | Historical; named low byte |
-| 60 | u8 | `IUV` | Historical |
-| 61 | `0x07` | `wind_machine` | Historical |
-| 61 | `0x08` | `outdoor_machine` | Historical |
-| 61 | `0x10` | `four_way` | Historical |
-| 61 | `0xE0` | `rev46` | Opaque; three reserved bits |
-| 62-71 | ten u8 fields | `rev47` through `rev56`, respectively | Opaque; one reserved byte per field |
-| 72-77 | `uint8_t[6]` | `extra` | Opaque; historical six-byte tail |
-| 78-79 | originally `uint16_t` | `chk_sum` | Framing; decoded explicitly as big-endian, not native-endian struct access |
-| 80-81 | `uint8_t[2]` | `foooter` | Framing; `F4 FB` (historical spelling retained) |
+| Offset | Mask / original type | Original field | Usage | Verification | Description |
+| --- | --- | --- | --- | --- | --- |
+| 41 | u8 | `compressor_frequency` | Used | Unverified | Compressor frequency |
+| 42 | u8 | `compressor_frequency_setting` | Used | Unverified | Compressor frequency setting |
+| 43 | u8 | `compressor_frequency_send` | Used | Unverified | Sent compressor frequency |
+| 44 | s8 | `outdoor_temperature` | Used | Unverified | Retained temperature interpretation |
+| 45 | s8 | `outdoor_condenser_temperature` | Used | Unverified | Retained temperature interpretation |
+| 46 | s8 | `compressor_exhaust_temperature` | Used | Unverified | Retained temperature interpretation |
+| 47 | s8 | `target_exhaust_temperature` | Used | Unverified | Retained temperature interpretation |
+| 48 | u8 | `expand_threshold` | Unused | Unverified | Expansion threshold |
+| 49 | u8 | `UAB_HIGH` | Unused | Unverified | Named high byte, unverified units/scaling |
+| 50 | u8 | `UAB_LOW` | Unused | Unverified | Named low byte |
+| 51 | u8 | `UBC_HIGH` | Unused | Unverified | Named high byte |
+| 52 | u8 | `UBC_LOW` | Unused | Unverified | Named low byte |
+| 53 | u8 | `UCA_HIGH` | Unused | Unverified | Named high byte |
+| 54 | u8 | `UCA_LOW` | Unused | Unverified | Named low byte |
+| 55 | u8 | `IAB` | Unused | Unverified | Meaning not confirmed |
+| 56 | u8 | `IBC` | Unused | Unverified | Meaning not confirmed |
+| 57 | u8 | `ICA` | Unused | Unverified | Meaning not confirmed |
+| 58 | u8 | `generatrix_voltage_high` | Unused | Unverified | Named high byte |
+| 59 | u8 | `generatrix_voltage_low` | Unused | Unverified | Named low byte |
+| 60 | u8 | `IUV` | Unused | Unverified | Meaning not confirmed |
+| 61 | `0x07` | `wind_machine` | Unused | Unverified | Meaning not confirmed |
+| 61 | `0x08` | `outdoor_machine` | Unused | Unverified | Meaning not confirmed |
+| 61 | `0x10` | `four_way` | Unused | Unverified | Meaning not confirmed |
+| 61 | `0xE0` | `rev46` | Reserved | Unknown | Three reserved bits |
+| 62-71 | ten u8 fields | `rev47` through `rev56`, respectively | Reserved | Unknown | One reserved byte per field |
+| 72-77 | `uint8_t[6]` | `extra` | Unused | Unknown | Original six-byte tail |
+| 78-79 | originally `uint16_t` | `chk_sum` | Framing | Verified | Decoded explicitly as big-endian, not native-endian struct access; see captures above |
+| 80-81 | `uint8_t[2]` | `foooter` | Framing | Verified | `F4 FB`; original spelling retained; see captures above |
 
-The trailing offsets above describe **only the historical 82-byte frame**.
+The trailing offsets above describe **only the original 82-byte frame layout**.
 For another frame length, the checksum/footer positions are relative to its
 validated end; do not assume that an extended tail shares these fixed positions
 or that its extra bytes have known meanings. Compiler tail padding from the old
