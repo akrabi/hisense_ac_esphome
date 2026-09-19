@@ -56,18 +56,18 @@ void malformed_and_bounds() {
         CHECK(feed(parser, wire(bad), now) == 0);
         CHECK(feed(parser, good, now) == 1);
     }
-    // Framing is bounded separately from the single supported status layout.
+    // This branch additionally accepts the experimental 160-byte status layout.
     for (size_t length = 9; length <= protocol::MAX_FRAME_SIZE; ++length) {
         const auto frame = synthetic(length);
         CHECK(feed(parser, wire(frame), now) == 1);
         DeviceStatus status;
-        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82));
+        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82 || length == 160));
     }
     for (size_t length = protocol::MAX_FRAME_SIZE + 1; length <= 264; ++length) {
         CHECK(feed(parser, wire(synthetic(length)), now) == 0);
         CHECK(feed(parser, good, now) == 1);
     }
-    CHECK(protocol::MAX_FRAME_SIZE == 128);
+    CHECK(protocol::MAX_FRAME_SIZE == 160);
     auto maximum = synthetic(protocol::MAX_FRAME_SIZE);
     std::fill(maximum.begin() + 5, maximum.end() - 4, 0xF4);
     seal(maximum);
@@ -133,14 +133,37 @@ void public_issue_captures() {
     Bytes concatenated = escaped;
     concatenated.insert(concatenated.end(), escaped.begin(), escaped.end());
     CHECK(feed(parser, concatenated, now) == 2);
-    // Valid framing in an issue report does not establish its status mapping.
-    const auto unsupported = capture("issue_6_status_160.hex");
-    CHECK(unsupported.size() == 160);
-    CHECK(feed(parser, unsupported, now) == 0);
+    const auto experimental = capture("issue_6_status_160.hex");
+    CHECK(experimental.size() == 160);
+    for (size_t split = 0; split <= experimental.size(); ++split) {
+        parser.reset();
+        auto count = feed(parser, Bytes(experimental.begin(), experimental.begin() + split), now);
+        now += 20;
+        count += feed(parser, Bytes(experimental.begin() + split, experimental.end()), now);
+        CHECK(count == 1);
+        DeviceStatus status;
+        CHECK(protocol::decode_status(parser.data(), experimental.size(), status));
+        // These are predictions under the shared-prefix assumption, not
+        // evidence that the device really was in these states.
+        CHECK(status.indoor_temperature_setting == 16);
+        CHECK(status.indoor_temperature_status == 26);
+        CHECK(status.outdoor_temperature == 15);
+        CHECK(status.compressor_frequency_send == 255);
+    }
+    auto changed_tail = experimental;
+    std::fill(changed_tail.begin() + 48, changed_tail.end() - 4, 0xA5);
+    seal(changed_tail);
+    CHECK(feed(parser, wire(changed_tail), now) == 1);
     DeviceStatus status;
-    status.indoor_temperature_setting = 23;
-    CHECK(!protocol::decode_status(unsupported.data(), unsupported.size(), status));
-    CHECK(status.indoor_temperature_setting == 23);
+    CHECK(protocol::decode_status(parser.data(), changed_tail.size(), status));
+    CHECK(status.indoor_temperature_setting == 16 && status.outdoor_temperature == 15);
+    changed_tail[13] = 0x65;
+    seal(changed_tail);
+    CHECK(feed(parser, wire(changed_tail), now) == 1);
+    CHECK(!protocol::decode_status(parser.data(), changed_tail.size(), status));
+    changed_tail = experimental;
+    changed_tail[20] ^= 1;
+    CHECK(feed(parser, wire(changed_tail), now) == 0);
     CHECK(feed(parser, escaped, now) == 1);
 }
 

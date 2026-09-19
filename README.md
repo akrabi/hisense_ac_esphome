@@ -1,5 +1,11 @@
 # Hisense Air Conditioner Component for ESPHome
 
+> **Experimental branch: `experimental/adt-09ux4rbl8-160-byte`.**
+> This branch enables unverified 160-byte status decoding for the ADT-09UX4RBL8
+> report in [issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6).
+> Matching field offsets and control compatibility are assumptions to test, not
+> established support. See the [testing instructions](doc/adt-09ux4rbl8-testing.md).
+
 This project is a replacement hardware and a matching ESPHome external component for  Hisense Air Conditioners Wifi Module. While these Wifi modules allow control over the AC (even local only) with [integration to HA](https://github.com/deiger/AirCon), the module itself is highly unreliable.
 By replacing the existing Hisense module with our custom one we achieve better reliabilty, faster response time and additional information about the AC unit.
 

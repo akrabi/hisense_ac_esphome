@@ -34,8 +34,6 @@ int main() {
     auto unknown = synthetic(21);
     receive(ac, bus, unknown, 150);
     CHECK(bus.tx.size() == 1);
-    receive(ac, bus, capture("issue_6_status_160.hex"), 175);
-    CHECK(bus.tx.size() == 1 && ac.publications.empty());
     receive(ac, bus, status, 200);  // Off -> on prerequisite.
     CHECK(bus.tx.size() == 2 && bus.tx[1] == Bytes(on, on + sizeof(on)));
     status[18] = 0x38;
@@ -79,5 +77,14 @@ int main() {
     test_clock = 2400; other.loop();
     CHECK(other_bus.tx.size() == 1);
     CHECK(bus.tx.back() == Bytes(speed_max, speed_max + CMD_SIZE));
+    uart::UARTComponent experimental_bus;
+    HisenseAC experimental_ac(&experimental_bus);
+    experimental_ac.setup();
+    experimental_ac.loop();
+    receive(experimental_ac, experimental_bus, capture("issue_6_status_160.hex"), 2500);
+    CHECK(experimental_ac.publications.size() == 1);
+    // Values predicted by the experimental prefix decoder, not confirmed
+    // measurements from the reporting unit.
+    CHECK(experimental_ac.target_temperature == 16 && experimental_ac.current_temperature == 26);
     return 0;
 }

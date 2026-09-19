@@ -8,8 +8,10 @@ namespace esphome {
 namespace hisense_ac {
 namespace protocol {
 
-constexpr size_t MAX_FRAME_SIZE = 128;
+constexpr size_t MAX_FRAME_SIZE = 160;
 constexpr size_t STATUS_FRAME_SIZE = 82;
+// Experimental ADT-09UX4RBL8 capture; payload meanings need device validation.
+constexpr size_t EXTENDED_STATUS_FRAME_SIZE = 160;
 // Software recovery threshold, not a hardware-verified bus timing constraint.
 constexpr uint32_t INTER_BYTE_TIMEOUT_MS = 100;
 enum class ParseError { NONE, HEADER, LENGTH, ESCAPE, FOOTER, CHECKSUM, TIMEOUT };
@@ -37,8 +39,8 @@ private:
     ParseError last_error_{ParseError::NONE};
 };
 
-// Validates the envelope, checksum, class and supported 82-byte status layout.
-// Decodes only consumed fields; the remaining payload is opaque.
+// Also accepts the experimental 160-byte layout on this branch. Its field
+// offsets are assumed to match the 82-byte prefix, not hardware-verified.
 // On failure, leaves the caller's last decoded snapshot unchanged.
 bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status);
 

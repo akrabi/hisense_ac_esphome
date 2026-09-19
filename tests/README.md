@@ -43,17 +43,19 @@ control/loop/publication path, not a second implementation of that behavior.
 
 Coverage includes every capture fragmentation/truncation position, concatenated
 packets, header overlap, noise, payload/checksum stuffing, high-bit data, checksum
-and footer errors, accepted lengths from 9–128 decoded bytes and rejection of
+and footer errors, accepted lengths from 9–160 decoded bytes and rejection of
 larger declared lengths through 264, inconsistent declared lengths, full capacity
 with stuffing, timeout boundaries and clock rollover, interleaved
 instances, explicit signed decoding, all mode/swing/display masks, and 100,000
 deterministic noise bytes. These replace the foundation commit's known-bug
 characterization tests. Supported 82-byte captures are tested at every wire
 fragmentation boundary, individually and concatenated. Synthetic nonzero final
-payload bytes at lengths 82 and 128 must participate in the checksum;
+payload bytes at lengths 82 and 160 must participate in the checksum;
 checksums calculated using the original off-by-one boundary are rejected.
-The issue #6 capture is a negative regression: it must not publish status or
-advance an operation, and the parser must recover for subsequent supported data.
+On this experimental branch the issue #6 capture is decoded at every wire
+fragmentation boundary and exercised through actual component publication.
+Expected values are predictions from the shared-prefix assumption, not proof
+of actual field meanings. Bad checksums and unsupported classes still fail.
 
 Transport/component coverage includes queue acceptance and exhaustion, safe
 coalescing, response timing, prerequisite failures, all 16 swing transitions,
@@ -96,9 +98,9 @@ logs, configurations, personal identifiers or attachments.
 The two captures have identical 16-byte header layouts except the declared
 length. Explicit integrity tests independently verify length, stuffing and
 `sum(decoded[2:-4])`; native tests exercise the actual production parser and
-82-byte decoder. The 160-byte capture's field meanings are unverified, so it is
-rejected by the component despite its valid checksum. Retaining it as a test
-fixture does not enable that model or establish meanings for the extended tail.
+82-byte decoder and the experimental 160-byte prefix interpretation. The
+160-byte capture's field meanings remain unverified; tests verify what this code
+does, not that the physical unit reports those values or accepts its commands.
 
 Other frame classes, status variants, unused wire flags, and acknowledgment
 correlation require separate evidence. The stubs do not emulate the physical

@@ -1,0 +1,18 @@
+packages:
+  full: !include full.yaml
+
+esphome:
+  name: hisense-test-adt
+
+esp32:
+  board: esp32-c3-devkitm-1
+
+uart:
+  id: ac_uart
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+
+climate:
+  - id: !extend ac
+    temperature_unit: CELSIUS
+    optimistic: false

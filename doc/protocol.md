@@ -2,8 +2,9 @@
 
 ## Supported envelope
 
-The receive parser supports decoded frames of 9–128 bytes. This bounded capacity
-covers the supported 82-byte status layout; larger packets are rejected:
+On this experimental branch, the receive parser supports decoded frames of
+9–160 bytes, covering the existing 82-byte layout and the issue #6 capture.
+Larger packets are rejected:
 
 | Decoded offset | Meaning |
 | --- | --- |
@@ -31,10 +32,11 @@ and a new header beginning where an invalid footer was expected.
 
 ## Supported status layout
 
-Only checksum-valid **82-byte** responses with **offset 13 = `0x66`**
-are decoded as status (consumed fields end at offset 47). Both length and class
-are required. Other lengths within the parser's bound remain framing-only:
-a valid envelope does not establish a status layout.
+Checksum-valid **82-byte** responses with **offset 13 = `0x66`** are decoded
+as status. This branch also experimentally decodes **160-byte** responses using
+the same field offsets through byte 47. Both length and class are required.
+Other lengths within the parser's bound remain framing-only. The additional
+layout is an assumption for device testing, not established compatibility.
 This is based on:
 
 - The historical component's wire struct: 16 header bytes, 56 status bytes,
@@ -52,8 +54,9 @@ The 160-byte ADT-09UX4RBL8 capture in
 [issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6) has valid framing
 and checksum (`09 BA`), but its status-field meanings and control compatibility
 are unverified. Matching header bytes do not prove a shared payload layout.
-That fixture is retained to test rejection without publishing guessed status;
-160-byte decoding is deliberately excluded from this branch.
+This branch intentionally tests the shared-prefix hypothesis by publishing its
+decoded values. The main improvements branch instead rejects this packet.
+See [ADT-09UX4RBL8 testing](adt-09ux4rbl8-testing.md) before using it.
 
 This is **not a claim of model-specific control,
 capability, sensor meaning or sentinel handling**. No tail fields are inferred
@@ -267,8 +270,8 @@ frame until the next `feed()` call. Consume or copy it before feeding more bytes
 component discard a stale partial frame even with no subsequent UART traffic.
 
 `protocol::decode_status(frame, size, DeviceStatus &out)` independently validates
-the complete envelope and the supported 82-byte layout, then assigns only
-consumed fields to the typed snapshot. On
+the complete envelope and the 82-byte or experimental 160-byte layout, then
+assigns only consumed fields to the typed snapshot. On
 failure `out` is unchanged. It uses explicit unsigned masks, big-endian checksum
 decoding and signed arithmetic, never packed bitfields or a raw-buffer cast.
 
