@@ -6,9 +6,12 @@ This document lists the Hisense AC models that have been tested and confirmed to
 
 | AC Model | WiFi Module |
 |----------|-------------|
-| Tornado TOP-INV-120A | AEH-W4F1 |
+| Tornado TOP-INV-120A (WIFI) | AEH-W4F1 |
 | Hisense AST-12UW4RVETG00A | AEH-W4E1 |
 | ACOND ASTI-09UW4RVEDC00 | AEH-W4B1 |
+
+The Tornado entry also covers the TOP-INV-140A (WIFI) and TOP-INV-180A (WIFI)
+variants, which use the same AEH-W4F1 module.
 
 These are existing community-reported compatibility entries, not a claim that
 every subsequent firmware change has been retested on each unit. Display
