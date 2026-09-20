@@ -3,6 +3,11 @@
 This project is a replacement hardware and a matching ESPHome external component for  Hisense Air Conditioners Wifi Module. While these Wifi modules allow control over the AC (even local only) with [integration to HA](https://github.com/deiger/AirCon), the module itself is highly unreliable.
 By replacing the existing Hisense module with our custom one we achieve better reliabilty, faster response time and additional information about the AC unit.
 
+> **Compatibility:** Designed for AC units using compatible Hisense WiFi modules,
+> including confirmed setups with AEH-W4F1, AEH-W4E1, and AEH-W4B1. Check the
+> [tested models](doc/hardware/COMPATIBLE_DEVICES.md) before buying hardware;
+> the module model alone does not guarantee compatibility.
+
 ## Features
 
 - **Basic Climate Control**
