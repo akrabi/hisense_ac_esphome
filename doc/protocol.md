@@ -88,14 +88,66 @@ verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 and independently confirmed by th
 maintainer on another device. The latter confirmation did not identify a
 model/module, so it does not add a named compatibility entry.
 
-Unused fields from the removed packed wire struct remain **unverified**, not
-new capabilities: sleep, direction, somatosensory compensation, Fahrenheit and
-temperature-compensation flags, timers, wind door/drying, dual frequency,
+Unused fields from the removed packed wire struct are not new capabilities.
+Most remain **unverified**: sleep, direction, somatosensory compensation,
+Fahrenheit flags, timers, wind door/drying, dual frequency,
 efficient/low-power/heat/nature, smoke/voice/mute/smart-eye/cleaning/swap/dew,
 electrical/wind/filter/other LED flags, EEPROM/self-test/time-lapse, all fault
 and communication flags, electrical voltage/current fields, expansion threshold,
 outdoor-machine/four-way flags and reserved/extra bytes. Do not expose or decode
-them based solely on their historical names.
+them based solely on their historical names. The temperature-compensation upper
+nibble has the scoped Dry-mode readback evidence below, but is still unused by
+the decoder.
+
+## Dry-mode adjustment
+
+Evidence scope: one unit with unspecified model, maintainer captures dated
+2026-09-22, related to [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
+Cross-model behavior is unverified.
+
+In Dry mode (mode code 3), the **upper nibble of decoded status byte 26**
+encodes the signed adjustment. All displayed values from -7 through +7 were
+confirmed:
+
+| Magnitude | Positive adjustment: byte 26 | Negative adjustment: byte 26 |
+| --- | --- | --- |
+| 0 / neutral (`--`) | `0x01` | Not observed |
+| 1 | `0x11` | `0x91` |
+| 2 | `0x21` | `0xA1` |
+| 3 | `0x31` | `0xB1` |
+| 4 | `0x41` | `0xC1` |
+| 5 | `0x51` | `0xD1` |
+| 6 | `0x61` | `0xE1` |
+| 7 | `0x71` | `0xF1` |
+
+Bit 7 is the negative sign; bits 4-6 hold the magnitude (**sign-and-magnitude**,
+not two's complement). Upper-nibble value `0x8` was not observed. The lower
+nibble stayed `0x1`; its bit meanings remain unverified. The historical mask
+`0xF8` also includes unexplained bit 3, so the whole field is only partially
+verified.
+
+Status byte 19 stayed at 25 C across the full adjustment range; it is not the
+adjustment value. Physical adjustment units and baseline are unknown. In Cool,
+byte 26 was `0xA1` at a target of 26 C and `0xB1` at 27 C, so the signed
+interpretation is specific to Dry mode.
+
+| Mode | Absolute-temperature request | Decoded command byte 19 | Reported result |
+| --- | --- | --- | --- |
+| Cool | 27 C | `0x37` | Target changed from 26 C to 27 C |
+| Dry | 26 C | `0x35` | Target stayed at 27 C; adjustment stayed neutral |
+
+The Dry request remained unconfirmed despite continued status responses; no
+explicit rejection code was identified. **The Dry-adjustment write command,
+write offset and update-enable bits remain unknown.**
+
+### Related response fields
+
+| Field | Observed evidence | Verification limit |
+| --- | --- | --- |
+| Class byte 13 = `0x65` | 82-byte status-shaped replies followed control commands, including successful Cool and unconfirmed Dry requests | Not proof of success or rejection; still ignored by the decoder |
+| Class byte 13 = `0x66` | Explicit polls returned recognized status | Requested fields must match to confirm an operation |
+| Fan byte 16 = `0x01` | Present in both Cool and Dry | Meaning unknown; displayed AUTO/LOW may be retained state |
+| Byte 34, including `drying` mask `0xF0` | Remained zero during observed Dry adjustments | Purpose unverified; no demonstrated link to the adjustment |
 
 ## Complete status field reference
 
@@ -131,8 +183,9 @@ Verification describes the available evidence, not whether the code uses a field
 A field with a fault-like name is not necessarily an active-high fault indication.
 Units, scaling and polarity must not be inferred solely from its name or usage.
 
-For bitfields, the mask identifies bits before shifting. All are unsigned;
-single-bit fields express an originally named flag, not necessarily a verified
+For bitfields, the mask identifies bits before shifting. Original declarations
+are unsigned; the observed Dry-mode signed interpretation is documented above.
+Single-bit fields express an originally named flag, not necessarily a verified
 boolean meaning.
 `u8` and `s8` denote the original unsigned and signed byte interpretations.
 No additional scaling or multi-byte value construction is implied.
@@ -142,12 +195,12 @@ No additional scaling or multi-byte value construction is implied.
 | Offset | Mask / original type | Original field | Usage | Verification | Description |
 | --- | --- | --- | --- | --- | --- |
 | 0-15 | `uint8_t[16]` | `header` | Framing | Partial | See envelope and class checks above; not all header bytes have established meanings |
-| 16 | u8 | `wind_status` | Used | Unverified | Fan/air-volume code |
+| 16 | u8 | `wind_status` | Used | Unverified | Fan/air-volume code; observed code 1 remains unmapped |
 | 17 | u8 | `sleep_status` | Unused | Unverified | Sleep code |
 | 18 | `0x03` | `direction_status` | Unused | Unverified | Wind direction |
 | 18 | `0x0C` | `run_status` | Used | Unverified | Run bits, shifted right 2 |
 | 18 | `0xF0` | `mode_status` | Used | Unverified | Operating mode, shifted right 4 |
-| 19 | u8 | `indoor_temperature_setting` | Used | Unverified | Target temperature |
+| 19 | u8 | `indoor_temperature_setting` | Used | Unverified | Ordinary target; not the signed Dry adjustment |
 | 20 | u8 | `indoor_temperature_status` | Used | Unverified | Room temperature |
 | 21 | u8 | `indoor_pipe_temperature` | Used | Unverified | Pipe temperature |
 | 22 | s8 | `indoor_humidity_setting` | Used | Unverified | Retained humidity setting interpretation |
@@ -156,7 +209,7 @@ No additional scaling or multi-byte value construction is implied.
 | 25 | `0x07` | `somatosensory_compensation_ctrl` | Unused | Unverified | Compensation control |
 | 25 | `0xF8` | `somatosensory_compensation` | Unused | Unverified | Compensation value |
 | 26 | `0x07` | `temperature_Fahrenheit` | Unused | Unverified | Fahrenheit display field, not verified protocol-unit detection |
-| 26 | `0xF8` | `temperature_compensation` | Unused | Unverified | Temperature compensation |
+| 26 | `0xF8` | `temperature_compensation` | Unused | Partial | Upper nibble `0xF0` verified as signed Dry adjustment on the tested unit; bit 3 and other-mode semantics unverified |
 | 27 | u8 | `timer` | Unused | Unverified | Timer |
 | 28 | u8 | `hour` | Unused | Unverified | Hour |
 | 29 | u8 | `minute` | Unused | Unverified | Minute |
@@ -165,7 +218,7 @@ No additional scaling or multi-byte value construction is implied.
 | 32 | u8 | `poweroff_hour` | Unused | Unverified | Power-off hour |
 | 33 | u8 | `poweroff_minute` | Unused | Unverified | Power-off minute |
 | 34 | `0x0F` | `wind_door` | Unused | Unverified | Wind-door field |
-| 34 | `0xF0` | `drying` | Unused | Unverified | Drying field |
+| 34 | `0xF0` | `drying` | Unused | Unverified | Historical name; remained zero during observed Dry adjustments |
 
 ### Feature, display and diagnostic flags
 
