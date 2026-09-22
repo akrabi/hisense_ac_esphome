@@ -209,3 +209,51 @@ logger:
   level: DEBUG
   baud_rate: 0
 ```
+
+At DEBUG, `hisense_ac` logs incoming climate requests before validation, accepted
+operation IDs with normalized controls, and operation results such as `CONFIRMED`
+or `EXPIRED`. Incoming mode/fan/swing/preset numbers are ESPHome enum values;
+`-1` means absent, and `target_present` distinguishes an omitted target.
+An accepted request is queued, not yet confirmed by the AC.
+
+Operation traces use internal protocol codes and a hexadecimal `fields` mask:
+`01` mode, `02` target temperature, `04` fan, `08` swing, `10` preset,
+`20` display (`40` is an internal power-prerequisite flag). Operation traces
+print only controls selected by the mask; an omitted mode is not an Off command.
+For example, a temperature-only request logs
+`fields=0x02 target=26.00C protocol=C`, without unrelated mode/fan values.
+Targets are Celsius even when `protocol=F`; they are normalized to whole device
+degrees. Mode codes are 0 fan, 1 heat, 2 cool, 3 dry, 4 off; fan codes are
+0 auto, 2 quiet, 10 low, 14 medium, 18 high. Swing codes are 0 off, 1 horizontal,
+2 vertical, 3 both; preset codes are 0 none, 1 boost, 2 eco.
+Operation 0 identifies an unassociated poll failure, not a user request.
+
+The separate `hisense_ac.protocol` DEBUG tag dumps complete transmitted packets
+(`TX wire`, including byte stuffing) and checksum-valid received frames
+(`RX decoded`, with stuffing removed), **before** status classification.
+This includes frames subsequently logged as unsupported. RX metadata includes
+the raw class byte at decoded offset 13, or `n/a` if that position is not payload.
+Malformed/incomplete frames are not dumped; existing parser warnings still apply.
+
+Packet dumps use up to 32 bytes per line to avoid logger truncation. Each line
+includes total byte count and a zero-based offset; join consecutive chunks for
+the same packet. The `AC=` instance identifier distinguishes components during
+one boot, and standard ESPHome log timestamps establish the action timeline.
+TX traces record bytes handed to the UART, not proof of receipt or execution.
+
+To retain request/result traces but silence packet dumps:
+
+```yaml
+logger:
+  level: DEBUG
+  baud_rate: 0
+  logs:
+    hisense_ac.protocol: INFO
+```
+
+Set that tag to `DEBUG` for a capture, or omit the override. No `uart.debug` or
+additional UART reader/writer is needed or supported. Disable packet dumps after
+capturing: repeated confirmation polls can generate substantial output.
+For protocol investigations, record the physical-remote setting and action
+timestamp alongside full logs so changes can be correlated with complete frames.
+Tracing does not add support for new controls, response classes, or fan codes.

@@ -2,18 +2,36 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <initializer_list>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
-#define ESP_LOGD(...) ((void)0)
+#define ESPHOME_LOG_HAS_DEBUG
+#define ESP_LOGD(...) ::esphome::test_log(__VA_ARGS__)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGV(...) ((void)0)
 #define ESP_LOGCONFIG(...) ((void)0)
 #define LOG_CLIMATE(...) ((void)0)
 namespace esphome {
+struct TestLog {
+    std::string tag;
+    std::string message;
+};
+inline std::vector<TestLog> test_logs;
+inline void test_log(const char *tag, const char *format, ...) {
+    char message[512];
+    va_list args;
+    va_start(args, format);
+    const int size = std::vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    if (size < 0 || static_cast<size_t>(size) >= sizeof(message)) std::abort();
+    test_logs.push_back({tag, message});
+}
 extern uint32_t test_clock;
 inline uint32_t millis() { return test_clock; }
 class Component {

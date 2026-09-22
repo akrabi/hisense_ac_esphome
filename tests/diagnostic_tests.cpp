@@ -1,5 +1,6 @@
 #include "test_support.h"
 #include "hisense_ac.h"
+#include <sstream>
 
 uint32_t esphome::test_clock = 0;
 using namespace esphome;
@@ -35,7 +36,163 @@ Bytes status() {
     return frame;
 }
 
+bool has_log(const char *tag, const std::string &text) {
+    for (const auto &entry : test_logs) {
+        if (entry.tag == tag && entry.message.find(text) != std::string::npos) return true;
+    }
+    return false;
+}
+
+Bytes logged_packet(const char *direction) {
+    Bytes result;
+    unsigned expected_size = 0;
+    for (const auto &entry : test_logs) {
+        if (entry.tag != "hisense_ac.protocol" ||
+            entry.message.find(direction) == std::string::npos ||
+            entry.message.find(" offset=") == std::string::npos)
+            continue;
+        CHECK(entry.message.find("AC=") == 0 && entry.message.size() < 256);
+        const auto start = entry.message.find("bytes=");
+        CHECK(start != std::string::npos);
+        unsigned size, offset;
+        int consumed = 0;
+        CHECK(std::sscanf(entry.message.c_str() + start, "bytes=%u offset=%u: %n", &size, &offset, &consumed) == 2);
+        CHECK(consumed > 0 && offset == result.size());
+        if (result.empty()) expected_size = size;
+        CHECK(size == expected_size);
+        std::istringstream bytes(entry.message.substr(start + consumed));
+        unsigned byte;
+        while (bytes >> std::hex >> byte) {
+            CHECK(byte <= 255);
+            result.push_back(static_cast<uint8_t>(byte));
+        }
+        CHECK(bytes.eof() && result.size() > offset && result.size() - offset <= 32);
+    }
+    CHECK(expected_size != 0 && result.size() == expected_size);
+    return result;
+}
+
+void packet_traces() {
+    test_clock = 0;
+    Diagnostics rig;
+    test_logs.clear();
+    rig.loop(0);
+    CHECK(logged_packet("TX wire") == rig.bus.tx.back());
+
+    test_logs.clear();
+    auto frame = status();
+    frame[26] = 0xF4;
+    seal(frame);
+    rig.receive(wire(frame), 100);
+    CHECK(logged_packet("RX decoded") == frame);
+    CHECK(has_log("hisense_ac.protocol", "RX decoded bytes=82 class=0x66"));
+    CHECK(rig.ac.target_temperature == 22);
+
+    // Unsupported classes and short/maximum-length frames are traced, not published.
+    const auto publications = rig.ac.publications.size();
+    for (const size_t size : {size_t{9}, size_t{17}, size_t{18}, size_t{82}, size_t{128}}) {
+        auto unknown = synthetic(size);
+        if (size >= 18) unknown[13] = 0x65;
+        seal(unknown);
+        test_logs.clear();
+        rig.receive(wire(unknown), 200);
+        CHECK(logged_packet("RX decoded") == unknown);
+        CHECK(has_log("hisense_ac.protocol", size >= 18 ? "class=0x65" : "class=n/a"));
+        CHECK(rig.ac.publications.size() == publications && rig.ac.target_temperature == 22);
+        CHECK(rig.invalid.get_raw_state() == 0);
+    }
+
+    test_logs.clear();
+    frame[20] ^= 1;
+    rig.receive(wire(frame), 300);
+    CHECK(!has_log("hisense_ac.protocol", "RX decoded"));
+    CHECK(rig.invalid.get_raw_state() == 1);
+}
+
+void operation_traces() {
+    test_clock = 0;
+    Diagnostics rig;
+    rig.loop(0);
+    rig.receive(wire(status()), 100);
+    test_logs.clear();
+    climate::ClimateCall call;
+    call.requested_temperature = 16.4f;
+    rig.ac.control(call);
+    CHECK(has_log("hisense_ac", "mode=-1 target_present=1 target=16.40C fan=-1 swing=-1 preset=-1"));
+    CHECK(has_log("hisense_ac", "Operation 1 ACCEPTED: fields=0x02 target=16.00C protocol=C"));
+    rig.loop(101);
+    test_logs.clear();
+    rig.receive(wire(status()), 200);
+    CommandPacket expected;
+    CHECK(encode_temperature(16, false, expected));
+    CHECK(logged_packet("TX wire") == Bytes(expected.data, expected.data + expected.size));
+    CHECK(rig.bus.tx.back() == Bytes(expected.data, expected.data + expected.size));
+    CHECK(expected.size == 51); // Includes a stuffed checksum byte.
+    rig.loop(300);
+    rig.loop(800);
+    auto changed = status();
+    changed[19] = 16;
+    seal(changed);
+    rig.receive(wire(changed), 900);
+    CHECK(has_log("hisense_ac", "Operation 1 CONFIRMED: fields=0x02 target=16.00C protocol=C"));
+    CHECK(rig.ac.target_temperature == 16 && !rig.ac.warning);
+
+    test_logs.clear();
+    call.requested_temperature = 25.0f;
+    rig.ac.control(call);
+    rig.loop(901);
+    rig.receive(wire(changed), 1000);
+    rig.loop(1100);
+    rig.loop(1700);
+    rig.receive(wire(changed), 1800);
+    rig.loop(10900);
+    CHECK(has_log("hisense_ac", "Operation 2 EXPIRED: fields=0x02 target=25.00C protocol=C"));
+    CHECK(rig.ac.target_temperature == 16 && rig.ac.warning);
+
+    test_logs.clear();
+    call.requested_temperature = 0.0f;
+    call.requested_mode = climate::CLIMATE_MODE_DRY;
+    call.requested_fan = climate::CLIMATE_FAN_LOW;
+    call.requested_swing = climate::CLIMATE_SWING_VERTICAL;
+    call.requested_preset = climate::CLIMATE_PRESET_ECO;
+    rig.ac.control(call);
+    const auto raw = "mode=" + std::to_string(static_cast<int>(*call.requested_mode)) +
+                     " target_present=1 target=0.00C fan=" + std::to_string(static_cast<int>(*call.requested_fan)) +
+                     " swing=" + std::to_string(static_cast<int>(*call.requested_swing)) +
+                     " preset=" + std::to_string(static_cast<int>(*call.requested_preset));
+    CHECK(has_log("hisense_ac", raw));
+    CHECK(!has_log("hisense_ac", "ACCEPTED"));
+
+    test_logs.clear();
+    call.requested_temperature = 22.0f;
+    rig.ac.control(call);
+    CHECK(has_log("hisense_ac",
+                  "Operation 3 ACCEPTED: fields=0x1F mode=3 target=22.00C fan=10 swing=2 preset=2 protocol=C"));
+    rig.ac.set_display(false);
+    CHECK(has_log("hisense_ac", "Operation 4 ACCEPTED: fields=0x20 display=0 protocol=C"));
+
+    test_logs.clear();
+    climate::ClimateCall off;
+    off.requested_mode = climate::CLIMATE_MODE_OFF;
+    off.requested_fan = climate::CLIMATE_FAN_AUTO;
+    off.requested_swing = climate::CLIMATE_SWING_OFF;
+    off.requested_preset = climate::CLIMATE_PRESET_NONE;
+    rig.ac.control(off);
+    CHECK(has_log("hisense_ac",
+                  "Operation 5 ACCEPTED: fields=0x1D mode=4 fan=0 swing=0 preset=0 protocol=C"));
+
+    test_clock = 0;
+    Diagnostics silent;
+    test_logs.clear();
+    silent.loop(0);
+    silent.loop(600);
+    silent.loop(601);
+    CHECK(has_log("hisense_ac", "Operation 0 TIMEOUT: fields=0x00 protocol=C"));
+}
+
 int main() {
+    packet_traces();
+    operation_traces();
     test_clock = 0;
     Diagnostics rig;
     CHECK(rig.connected.has_state() && !rig.connected.state);

@@ -63,6 +63,13 @@ quantization and remembered setpoints. Diagnostics are exercised through the
 actual component; unknown startup readings remain unpublished. Python tests
 validate metadata defaults/overrides, capability restrictions, unsafe UART
 configurations, visual limits, and documentation examples with dummy secrets.
+Diagnostic trace tests reconstruct complete TX wire and RX decoded packets from
+bounded log chunks, including stuffing, unsupported classes, short frames and
+the maximum supported frame length. They verify that rejected frames do not
+publish status and that request normalization, confirmation and expiry appear
+in DEBUG traces without changing command bytes or state behavior. Operation
+traces omit absent controls while retaining explicitly requested zero/off
+values, including combined calls and display requests.
 
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC

@@ -1,6 +1,8 @@
 #include "hisense_ac.h"
 #include "temperature.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #ifdef USE_ESP32
 #include "esphome/components/uart/uart_component_esp_idf.h"
 #include "soc/soc_caps.h"
@@ -12,6 +14,56 @@ namespace esphome {
 namespace hisense_ac {
 static const char *const TAG = "hisense_ac";
 namespace {
+const char *result_name(transport::Result result) {
+    switch (result) {
+        case transport::Result::CONFIRMED: return "CONFIRMED";
+        case transport::Result::UNVERIFIED: return "UNVERIFIED";
+        case transport::Result::TIMEOUT: return "TIMEOUT";
+        case transport::Result::EXPIRED: return "EXPIRED";
+        case transport::Result::CANCELLED: return "CANCELLED";
+        case transport::Result::SUPERSEDED: return "SUPERSEDED";
+        case transport::Result::UNSUPPORTED: return "UNSUPPORTED";
+        case transport::Result::PREREQUISITE: return "PREREQUISITE";
+        case transport::Result::WRITE_FAILED: return "WRITE_FAILED";
+    }
+    return "UNKNOWN";
+}
+
+void log_request(const void *ac, uint32_t generation, const char *event, const transport::Request &request) {
+#ifdef ESPHOME_LOG_HAS_DEBUG
+    char values[6][32]{};
+    if (request.fields & transport::MODE)
+        std::snprintf(values[0], sizeof(values[0]), " mode=%u", static_cast<unsigned>(request.mode));
+    if (request.fields & transport::TEMPERATURE)
+        std::snprintf(values[1], sizeof(values[1]), " target=%.2fC", request.temperature);
+    if (request.fields & transport::FAN)
+        std::snprintf(values[2], sizeof(values[2]), " fan=%u", static_cast<unsigned>(request.fan));
+    if (request.fields & transport::SWING)
+        std::snprintf(values[3], sizeof(values[3]), " swing=%u", static_cast<unsigned>(request.swing));
+    if (request.fields & transport::PRESET)
+        std::snprintf(values[4], sizeof(values[4]), " preset=%u", static_cast<unsigned>(request.preset));
+    if (request.fields & transport::FIELD_DISPLAY)
+        std::snprintf(values[5], sizeof(values[5]), " display=%u", static_cast<unsigned>(request.display));
+    ESP_LOGD(TAG, "AC=%p Operation %u %s: fields=0x%02X%s%s%s%s%s%s protocol=%s",
+             ac, static_cast<unsigned>(generation), event, static_cast<unsigned>(request.fields),
+             values[0], values[1], values[2], values[3], values[4], values[5], request.fahrenheit ? "F" : "C");
+#endif
+}
+
+void log_packet(const void *ac, const char *direction, const uint8_t *data, size_t size) {
+#ifdef ESPHOME_LOG_HAS_DEBUG
+    // Bound each log line so even the largest supported frame is not truncated.
+    constexpr size_t CHUNK_SIZE = 32;
+    for (size_t offset = 0; offset < size; offset += CHUNK_SIZE) {
+        const size_t count = std::min(CHUNK_SIZE, size - offset);
+        char hex[CHUNK_SIZE * 3];
+        ESP_LOGD("hisense_ac.protocol", "AC=%p %s bytes=%u offset=%u: %s", ac, direction,
+                 static_cast<unsigned>(size), static_cast<unsigned>(offset),
+                 format_hex_pretty_to(hex, sizeof(hex), data + offset, count, ' '));
+    }
+#endif
+}
+
 bool encode_mode(climate::ClimateMode mode, uint8_t &out) {
     switch (mode) {
         case climate::CLIMATE_MODE_OFF: out = transport::MODE_OFF; return true;
@@ -129,6 +181,14 @@ void HisenseAC::loop() {
 bool HisenseAC::get_response(uint8_t input) {
     const size_t size = parser_.feed(input, millis());
     if (size == 0) return false;
+    log_packet(this, "RX decoded", parser_.data(), size);
+    if (size >= 18) {
+        ESP_LOGD("hisense_ac.protocol", "AC=%p RX decoded bytes=%u class=0x%02X", static_cast<const void *>(this),
+                 static_cast<unsigned>(size), static_cast<unsigned>(parser_.data()[13]));
+    } else {
+        ESP_LOGD("hisense_ac.protocol", "AC=%p RX decoded bytes=%u class=n/a", static_cast<const void *>(this),
+                 static_cast<unsigned>(size));
+    }
     if (!protocol::decode_status(parser_.data(), size, status_)) {
         ESP_LOGD("hisense_ac", "Ignoring unsupported response (%u bytes).", static_cast<unsigned>(size));
         return false;
@@ -156,12 +216,13 @@ bool HisenseAC::send_packet(const uint8_t *data, size_t size) {
     write_array(data, size);
     if (millis() - started >= 10)
         ESP_LOGW("hisense_ac", "UART write exceeded 10 ms; check exclusive bus ownership and backend.");
+    log_packet(this, "TX wire", data, size);
     return !backend->is_failed();
 }
 
 void HisenseAC::operation_finished(uint32_t generation, transport::Result result,
                                   const transport::Request &request) {
-    (void) request;
+    log_request(this, generation, result_name(result), request);
     if (result == transport::Result::TIMEOUT && response_timeouts_ != UINT32_MAX) ++response_timeouts_;
     const bool changed = pending_.complete(generation);
     presentation_dirty_ |= changed && optimistic_;
@@ -301,6 +362,7 @@ void HisenseAC::publish_diagnostics_() {
 }
 
 void HisenseAC::accepted_(const transport::Request &request, uint32_t generation) {
+    log_request(this, generation, "ACCEPTED", request);
     latest_generation_ = generation;
     pending_.accept(request, generation, millis());
     if (optimistic_) publish_presentation_();
@@ -313,6 +375,13 @@ void HisenseAC::update() {
 }
 
 void HisenseAC::control(const climate::ClimateCall &call) {
+    ESP_LOGD(TAG, "AC=%p Climate request (ESPHome enums; -1=unset): mode=%d target_present=%u target=%.2fC fan=%d swing=%d preset=%d",
+             static_cast<const void *>(this), call.get_mode().has_value() ? static_cast<int>(*call.get_mode()) : -1,
+             static_cast<unsigned>(call.get_target_temperature().has_value()),
+             call.get_target_temperature().has_value() ? *call.get_target_temperature() : NAN,
+             call.get_fan_mode().has_value() ? static_cast<int>(*call.get_fan_mode()) : -1,
+             call.get_swing_mode().has_value() ? static_cast<int>(*call.get_swing_mode()) : -1,
+             call.get_preset().has_value() ? static_cast<int>(*call.get_preset()) : -1);
     transport::Request request;
     request.fahrenheit = temp_unit == FAHRENHEIT;
     bool valid = true;
