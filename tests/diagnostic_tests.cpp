@@ -98,15 +98,101 @@ void packet_traces() {
         rig.receive(wire(unknown), 200);
         CHECK(logged_packet("RX decoded") == unknown);
         CHECK(has_log("hisense_ac.protocol", size >= 18 ? "class=0x65" : "class=n/a"));
+        CHECK(has_log("hisense_ac", size == 82 ? "Control response (82 bytes, class=0x65)" :
+                                               "Ignoring unsupported response"));
         CHECK(rig.ac.publications.size() == publications && rig.ac.target_temperature == 22);
         CHECK(rig.invalid.get_raw_state() == 0);
     }
 
+    auto unknown = status();
+    unknown[13] = 0x67;
+    seal(unknown);
     test_logs.clear();
-    frame[20] ^= 1;
+    rig.receive(wire(unknown), 250);
+    CHECK(has_log("hisense_ac", "Ignoring unsupported response (82 bytes, class=0x67)"));
+    CHECK(!has_log("hisense_ac", "Control response"));
+    CHECK(rig.ac.publications.size() == publications);
+
+    test_logs.clear();
+    frame = capture("cool_control_65.hex");
+    frame[20] ^= 1;  // Bad checksum must not reach control-response classification.
     rig.receive(wire(frame), 300);
     CHECK(!has_log("hisense_ac.protocol", "RX decoded"));
+    CHECK(!has_log("hisense_ac", "Control response"));
     CHECK(rig.invalid.get_raw_state() == 1);
+}
+
+void captured_control_responses() {
+    for (bool dry : {false, true}) {
+        const auto control = capture(dry ? "dry_control_65.hex" : "cool_control_65.hex");
+        const auto polled = capture(dry ? "dry_poll_66.hex" : "cool_poll_66.hex");
+        auto baseline = polled;
+        baseline[19] = dry ? 27 : 26;  // Synthetic pre-command state.
+        seal(baseline);
+        test_clock = 0;
+        Diagnostics rig;
+        sensor::Sensor condenser;
+        rig.ac.set_outdoor_condenser_temperature(&condenser);
+        rig.loop(0);
+        rig.receive(wire(baseline), 100);
+        test_logs.clear();
+        climate::ClimateCall call;
+        call.requested_temperature = dry ? 26.0f : 27.0f;
+        rig.ac.control(call);
+        rig.loop(101);
+        const auto before_baseline = rig.ac.publications.size();
+        rig.receive(wire(control), 150);
+        CHECK(rig.bus.tx.size() == 2 && rig.bus.tx.back()[13] == 0x66);
+        CHECK(rig.ac.publications.size() == before_baseline);
+        rig.receive(wire(baseline), 200);
+        CHECK(rig.bus.tx.size() == 3 && rig.bus.tx.back()[13] == 0x65);
+        const auto publications = rig.ac.publications.size();
+        const auto measurements = condenser.publications.size();
+        rig.receive(wire(control), 300);  // During control settling.
+        rig.loop(800);
+        CHECK(rig.bus.tx.size() == 4 && rig.bus.tx.back()[13] == 0x66);
+        rig.receive(wire(control), 900);  // Also ignored in the confirmation window.
+        rig.receive(wire(control), 1200);
+        CHECK(rig.ac.publications.size() == publications);
+        CHECK(condenser.publications.size() == measurements);
+        CHECK(rig.ac.target_temperature == baseline[19]);
+        CHECK(rig.age.get_raw_state() == 1 && rig.invalid.get_raw_state() == 0);
+        CHECK(has_log("hisense_ac", "Control response (82 bytes, class=0x65)"));
+        CHECK(!has_log("hisense_ac", "Operation 1 CONFIRMED"));
+        rig.receive(wire(polled), 1250);
+        CHECK(rig.ac.target_temperature == 27);
+        if (dry) {
+            // Continued stale polls cannot turn the control reply into success.
+            for (uint32_t now = 1400; now < 10000; now += 600) {
+                rig.loop(now);
+                rig.receive(wire(polled), now + 100);
+            }
+            rig.loop(10101);
+            CHECK(has_log("hisense_ac", "Operation 1 EXPIRED"));
+            CHECK(!has_log("hisense_ac", "Operation 1 CONFIRMED"));
+        } else {
+            CHECK(has_log("hisense_ac", "Operation 1 CONFIRMED"));
+        }
+        size_t setters = 0;
+        for (const auto &packet : rig.bus.tx) setters += packet[13] == 0x65;
+        CHECK(setters == 1);
+    }
+
+    test_clock = 0;
+    Diagnostics silent;
+    silent.loop(0);
+    test_logs.clear();
+    silent.receive(wire(capture("cool_control_65.hex")), 100);
+    CHECK(!silent.connected.state && !silent.age.has_state());
+    CHECK(silent.ac.publications.empty() && silent.invalid.get_raw_state() == 0);
+    silent.loop(600);
+    silent.loop(601);
+    CHECK(silent.timeouts.get_raw_state() == 1);
+    CHECK(has_log("hisense_ac", "Operation 0 TIMEOUT"));
+    silent.receive(wire(capture("cool_control_65.hex")), 700);
+    CHECK(!silent.connected.state && !silent.age.has_state());
+    silent.receive(wire(capture("cool_poll_66.hex")), 800);
+    CHECK(silent.connected.state && silent.ac.target_temperature == 27);
 }
 
 void operation_traces() {
@@ -192,6 +278,7 @@ void operation_traces() {
 
 int main() {
     packet_traces();
+    captured_control_responses();
     operation_traces();
     test_clock = 0;
     Diagnostics rig;

@@ -112,6 +112,36 @@ correlation require separate evidence. The stubs do not emulate the physical
 UART driver or Home Assistant. Firmware compilation verifies the actual ESPHome
 API surface; it is not a hardware test or a measured callback-latency guarantee.
 
+## Control-response captures
+
+The following packet-only fixtures come from the maintainer's instrumented
+2026-09-22 captures, on a unit with unspecified model/module. Firmware reported
+ESPHome 2026.8.2 (compiled September 22 at 11:34:37); the log-viewer CLI reported
+2026.9.0. These are complete **decoded RX bytes**, reconstructed from the
+component's bounded `RX decoded` chunks, not arbitrary UART log fragments.
+There are no interior `F4` bytes in these four packets, so wire bytes are
+identical. Original private logs and network identifiers are not included.
+
+| Fixture | Capture / first chunk timestamp | Class | Checksum |
+| --- | --- | --- | --- |
+| `cool_control_65.hex` | `cooling-26-27.txt`, `12:08:37.055` | `65` | `0653` |
+| `cool_poll_66.hex` | `cooling-26-27.txt`, `12:08:37.581` | `66` | `0653` |
+| `dry_control_65.hex` | `dry-change_temp_through_ha.txt`, `12:10:52.037` | `65` | `05A5` |
+| `dry_poll_66.hex` | `dry-change_temp_through_ha.txt`, `12:10:52.578` | `66` | `05A6` |
+
+The Cool pair followed a target-27 request; the Dry pair followed a target-26
+request but still reports target 27 and neutral adjustment. Python integrity
+tests independently assert headers, length, checksums and exact pairwise
+differences. Native tests replay every fragmentation boundary with signed and
+unsigned `char`: the parser accepts both classes, but only `66` decodes status.
+Component diagnostic tests use these replies with synthetic baselines/timing to
+check that `65` cannot satisfy baseline polling, publish climate/sensor values,
+refresh status age/health, or confirm a command even when its target matches.
+Cool confirms only on the matching poll; Dry expires after unchanged polls,
+without resending the setter. Unknown classes/lengths and bad checksums retain
+their separate diagnostics. See the evidence and pinned external reference in
+[Control responses](../doc/protocol.md#control-responses-class-0x65).
+
 ## Hardware acceptance (manual, not run by these tests)
 
 Record the ESPHome version, AC model/module and firmware revision. Confirm normal

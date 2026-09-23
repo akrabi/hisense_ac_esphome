@@ -162,6 +162,29 @@ void checksum_end_boundary() {
     }
 }
 
+void control_response_captures() {
+    for (const char *name : {"cool_control_65.hex", "cool_poll_66.hex",
+                             "dry_control_65.hex", "dry_poll_66.hex"}) {
+        const auto decoded = capture(name);
+        const auto packet = wire(decoded);
+        CHECK(decoded.size() == 82);
+        for (size_t split = 0; split <= packet.size(); ++split) {
+            protocol::FrameParser parser;
+            uint32_t now = 0;
+            auto count = feed(parser, Bytes(packet.begin(), packet.begin() + split), now);
+            now += 20;
+            count += feed(parser, Bytes(packet.begin() + split, packet.end()), now);
+            CHECK(count == 1 && parser.invalid_frames() == 0);
+            CHECK(std::memcmp(parser.data(), decoded.data(), decoded.size()) == 0);
+            DeviceStatus status;
+            status.indoor_temperature_setting = 22;
+            const bool polled = decoded[13] == 0x66;
+            CHECK(protocol::decode_status(parser.data(), decoded.size(), status) == polled);
+            CHECK(status.indoor_temperature_setting == (polled ? 27 : 22));
+        }
+    }
+}
+
 void timeouts_and_instances() {
     protocol::FrameParser first, second;
     const auto a = wire(capture());
@@ -286,6 +309,7 @@ int main() {
     framing();
     malformed_and_bounds();
     public_issue_captures();
+    control_response_captures();
     checksum_end_boundary();
     timeouts_and_instances();
     decoding();

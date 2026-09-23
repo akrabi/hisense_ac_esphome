@@ -99,6 +99,61 @@ them based solely on their historical names. The temperature-compensation upper
 nibble has the scoped Dry-mode readback evidence below, but is still unused by
 the decoder.
 
+## Control responses (class `0x65`)
+
+The DEBUG message `Ignoring unsupported response (82 bytes)` in the maintainer's
+2026-09-22 captures referred to valid **class-`0x65` control responses**, not
+corrupt UART frames or an identified device rejection. The component now labels
+these explicitly:
+
+```text
+Control response (82 bytes, class=0x65); not used for state or command confirmation.
+```
+
+This is diagnostic classification only. These frames do not publish climate or
+sensor values, refresh status age/communication health, or advance an operation.
+Confirmation still requires a subsequent class-`0x66` poll response whose fields
+match the request. Other classes and unsupported lengths retain the generic
+unsupported-response diagnostic; invalid frames fail parser validation first.
+
+All 100 complete TX/RX packets reconstructed from four instrumented captures
+passed envelope, decoded-length and checksum checks. Five class-`0x65` replies
+followed five control transmissions (power on, Cool mode, Cool target 27 C, Dry
+mode, Dry target 26 C); 45 class-`0x66` replies followed polls. Every RX frame was
+82 decoded bytes. The unit's model/module is unspecified, and this is not a
+universal response-layout specification.
+
+The replies are status-shaped: three control/poll pairs differ only at class
+offset 13 and checksum offset 79. The power-on pair also differs at fan offset
+16. The Cool-target pair differs only at offsets 13 and 45 (condenser
+temperature); its checksum is unchanged because those changes cancel.
+Packet-only Cool/Dry target pairs are retained in
+[the regression fixtures](../tests/README.md#control-response-captures).
+
+Crucially, the Dry target-26 control reply and subsequent polls still contain
+target **27** at offset 19 and neutral adjustment `01` at offset 26. The operation
+expired without matching feedback. The same response class occurs on successful
+Cool commands: it is neither automatic success nor an observed NACK, and
+accepting it as status would not fix that Dry request.
+
+### Additional implementation reference
+
+The user-supplied
+[`air-condition_msg.c`](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c)
+corroborates this interpretation. At pinned revision `96f355b12da33c1c187f9d31cace1b02abcf2446`,
+`xm_KTWD` and other control tables specify set command 101 (`0x65`) and query
+command 102 (`0x66`), with a 62-byte status payload. `at_cmd_ret_kt` routes both
+`KTSET` (101, 0) and `KTZD` (102, 0) replies through `xm_KTZD`.
+The field names are defined by `XM_Command` in
+[`xm_type.h`](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/xm_type.h).
+
+That implementation also defines a separate `MessageHead::Result` and evaluates
+it in
+[`Proc_Result()`](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/message.c).
+This does not make the response class itself a success indicator or establish
+requested-value confirmation. No result-code handling, alternate status
+decoder, or new command is enabled from this external reference.
+
 ## Dry-mode adjustment
 
 Evidence scope: one unit with unspecified model, maintainer captures dated
@@ -144,7 +199,7 @@ write offset and update-enable bits remain unknown.**
 
 | Field | Observed evidence | Verification limit |
 | --- | --- | --- |
-| Class byte 13 = `0x65` | 82-byte status-shaped replies followed control commands, including successful Cool and unconfirmed Dry requests | Not proof of success or rejection; still ignored by the decoder |
+| Class byte 13 = `0x65` | 82-byte status-shaped replies followed control commands, including successful Cool and unconfirmed Dry requests | Explicitly logged as control responses; not used for status or confirmation (see above) |
 | Class byte 13 = `0x66` | Explicit polls returned recognized status | Requested fields must match to confirm an operation |
 | Fan byte 16 = `0x01` | Present in both Cool and Dry | Meaning unknown; displayed AUTO/LOW may be retained state |
 | Byte 34, including `drying` mask `0xF0` | Remained zero during observed Dry adjustments | Purpose unverified; no demonstrated link to the adjustment |
