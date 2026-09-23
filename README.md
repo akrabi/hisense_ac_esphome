@@ -69,7 +69,7 @@ climate:
 Feel free to submit issues and pull requests on GitHub.
 
 See [regression tests](tests/README.md) for credential-free ESP32 Arduino/ESP-IDF
-builds and native tests, and [UART protocol evidence](doc/protocol.md) for supported
+builds and native tests, and the [UART protocol reference](doc/protocol.md) for supported
 response layouts and remaining model-specific verification gaps.
 
 The development dependency baseline is ESPHome 2026.8.2. CI covers both ESP32

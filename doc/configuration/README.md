@@ -228,6 +228,17 @@ degrees. Mode codes are 0 fan, 1 heat, 2 cool, 3 dry, 4 off; fan codes are
 2 vertical, 3 both; preset codes are 0 none, 1 boost, 2 eco.
 Operation 0 identifies an unassociated poll failure, not a user request.
 
+Raw fan status `1` is also recognized as Auto for reporting and confirmation;
+the internal request code remains `0` and transmitted commands are unchanged.
+HA still exposes Auto, Low, Medium, High and Quiet, not all five physical speeds.
+On the captured five-speed unit, speeds 1/2 display as Low, speeds 3/4 as
+Medium, and speed 5 as High. HA commands still request speeds 1/3/5 for
+Low/Medium/High. The grouping is display-only: speed 2 does not confirm a
+Low command, and speed 4 does not confirm a Medium command. These recognized
+intermediate speeds no longer cause unsupported-field warnings. Quiet is
+unchanged and was not verified in that capture. See
+[fan decoding and confirmation](../protocol.md#fan-status-and-auto-confirmation).
+
 The separate `hisense_ac.protocol` DEBUG tag dumps complete transmitted packets
 (`TX wire`, including byte stuffing) and checksum-valid received frames
 (`RX decoded`, with stuffing removed), **before** status classification.

@@ -85,3 +85,27 @@ def test_public_issue_capture_integrity(name, wire_size, decoded_size, checksum)
     assert decoded[5:16] == bytes.fromhex("01 00 fe 01 01 01 01 00 66 00 01")
     assert decoded[-2:] == bytes.fromhex("f4 fb")
     assert sum(decoded[2:-4]) == int.from_bytes(decoded[-4:-2], "big") == checksum
+
+
+@pytest.mark.parametrize("mode,control_checksum,poll_checksum,differences", [
+    ("cool", 0x0653, 0x0653, [13, 45]),
+    ("dry", 0x05A5, 0x05A6, [13, 79]),
+])
+def test_control_response_capture_pairs(mode, control_checksum, poll_checksum, differences):
+    packets = []
+    for kind, response_class, checksum in [
+        ("control", 0x65, control_checksum), ("poll", 0x66, poll_checksum),
+    ]:
+        packet = bytes.fromhex(
+            (Path(__file__).parent / "fixtures" / f"{mode}_{kind}_{response_class:02x}.hex").read_text()
+        )
+        assert len(packet) == packet[4] + 9 == 82
+        assert packet[:4] == bytes.fromhex("F4 F5 01 40")
+        assert packet[13] == response_class
+        assert packet[-2:] == bytes.fromhex("F4 FB")
+        assert sum(packet[2:-4]) == int.from_bytes(packet[-4:-2], "big") == checksum
+        assert packet[18] == (0x28 if mode == "cool" else 0x38)
+        assert packet[19] == 27
+        assert packet[26] == (0xB1 if mode == "cool" else 0x01)
+        packets.append(packet)
+    assert [i for i, (a, b) in enumerate(zip(*packets)) if a != b] == differences

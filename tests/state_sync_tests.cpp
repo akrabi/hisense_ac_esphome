@@ -185,6 +185,140 @@ void unknown_fields_and_presets() {
     CHECK(!optimistic.ac.preset.has_value()); // Unverified is not confirmed NONE.
 }
 
+void fan_status_reporting() {
+    const climate::ClimateFanMode expected[] = {
+        climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_QUIET,
+        climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
+        climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH};
+    size_t index = 0;
+    for (uint8_t raw : {0, 1, 2, 10, 12, 14, 16, 18}) {
+        Rig rig;
+        auto frame = Rig::report();
+        frame[16] = raw;
+        seal(frame);
+        DeviceStatus decoded;
+        CHECK(protocol::decode_status(frame.data(), frame.size(), decoded));
+        CHECK(decoded.wind_status == raw);
+        test_logs.clear();
+        rig.receive(frame, 100);
+        CHECK(rig.ac.fan_mode == expected[index++]);
+        for (const auto &entry : test_logs)
+            CHECK(entry.message.find("Unsupported status fields") == std::string::npos);
+    }
+    for (uint8_t raw : {4, 6, 8, 255}) {
+        Rig rig;
+        auto unknown = Rig::report();
+        unknown[16] = raw;
+        seal(unknown);
+        rig.receive(unknown, 100);
+        CHECK(!rig.ac.fan_mode.has_value());
+        rig.receive(Rig::report(), 200);
+        rig.receive(unknown, 300);
+        CHECK(rig.ac.fan_mode == climate::CLIMATE_FAN_LOW);
+    }
+
+    const auto automatic = capture("fan_auto_status_82.hex");
+    DeviceStatus decoded;
+    CHECK(protocol::decode_status(automatic.data(), automatic.size(), decoded));
+    CHECK(decoded.wind_status == 1); // Decoder and packet traces retain the raw byte.
+    for (bool optimistic : {false, true}) {
+        for (bool already_auto : {false, true}) {
+            Rig rig(optimistic);
+            rig.prime();
+            if (already_auto) rig.receive(automatic, 150);
+            climate::ClimateCall call;
+            call.requested_fan = climate::CLIMATE_FAN_AUTO;
+            rig.ac.control(call);
+            rig.ac.loop();
+            rig.receive(already_auto ? automatic : Rig::report(), 200);
+            if (!already_auto) {
+                CHECK(rig.bus.tx.back() == Bytes(golden::speed_auto, golden::speed_auto + sizeof(golden::speed_auto)));
+                auto ack = automatic;
+                ack[13] = 0x65;
+                seal(ack);
+                rig.receive(ack, 250);
+                CHECK(rig.ac.fan_mode == (optimistic ? climate::CLIMATE_FAN_AUTO : climate::CLIMATE_FAN_LOW));
+                rig.until(800);
+                rig.receive(automatic, 801);
+            }
+            CHECK(rig.ac.fan_mode == climate::CLIMATE_FAN_AUTO && !rig.ac.warning);
+            CHECK(rig.bus.tx.size() == (already_auto ? 2u : 4u));
+            rig.until(10100);
+            CHECK(rig.ac.fan_mode == climate::CLIMATE_FAN_AUTO && !rig.ac.warning);
+        }
+    }
+}
+
+void grouped_fan_display_preserves_confirmation() {
+    for (bool optimistic : {false, true}) {
+        for (bool medium : {false, true}) {
+            Rig rig(optimistic);
+            rig.prime();
+            auto grouped = Rig::report();
+            grouped[16] = medium ? 16 : 12;
+            seal(grouped);
+            rig.receive(grouped, 150);
+            const auto expected = medium ? climate::CLIMATE_FAN_MEDIUM : climate::CLIMATE_FAN_LOW;
+            CHECK(rig.ac.fan_mode == expected);
+            climate::ClimateCall call;
+            call.requested_fan = expected;
+            test_logs.clear();
+            rig.ac.control(call);
+            rig.ac.loop();
+            rig.receive(grouped, 200);
+            const auto command = medium ? Bytes(golden::speed_med, golden::speed_med + sizeof(golden::speed_med)) :
+                                          Bytes(golden::speed_low, golden::speed_low + sizeof(golden::speed_low));
+            CHECK(rig.bus.tx.back() == command); // Same display label must not skip the setter.
+            rig.until(800);
+            rig.receive(grouped, 801);
+            CHECK(rig.ac.fan_mode == expected);
+            for (const auto &entry : test_logs) {
+                CHECK(entry.message.find("CONFIRMED") == std::string::npos);
+                CHECK(entry.message.find("Unsupported status fields") == std::string::npos);
+            }
+            auto exact = grouped;
+            exact[16] = medium ? 14 : 10;
+            seal(exact);
+            rig.until(1400);
+            rig.receive(exact, 1401);
+            CHECK(rig.ac.fan_mode == expected && !rig.ac.warning);
+            bool confirmed = false;
+            for (const auto &entry : test_logs)
+                confirmed |= entry.message.find("CONFIRMED") != std::string::npos;
+            CHECK(confirmed);
+            unsigned setters = 0;
+            for (const auto &packet : rig.bus.tx) setters += packet[13] == 0x65;
+            CHECK(setters == 1);
+        }
+    }
+}
+
+void temperature_memory_with_unknown_fields() {
+    for (bool heat : {false, true}) {
+        for (uint8_t fan : {1, 12, 16, 255}) {
+            Rig rig(true);
+            const uint8_t mode = heat ? 0x18 : 0x28;
+            auto stable = Rig::report(mode, 27, 0); // Room reading must not gate setpoint memory.
+            stable[16] = fan;
+            seal(stable);
+            rig.receive(stable, 100);
+            rig.receive(Rig::report(heat ? 0x28 : 0x18, 22), 200);
+            rig.mode(heat ? climate::CLIMATE_MODE_HEAT : climate::CLIMATE_MODE_COOL);
+            CHECK(rig.ac.target_temperature == 27);
+        }
+    }
+    // Invalid mode/target must not store a retained value under the wrong mode.
+    for (bool invalid_mode : {false, true}) {
+        Rig rig(true);
+        rig.receive(Rig::report(0x18, 27), 100);
+        rig.receive(Rig::report(0x28, 22), 200);
+        rig.receive(Rig::report(invalid_mode ? 0xF8 : 0x18, invalid_mode ? 29 : 255), 300);
+        rig.receive(Rig::report(0x08, 20), 400);
+        rig.mode(invalid_mode ? climate::CLIMATE_MODE_COOL : climate::CLIMATE_MODE_HEAT);
+        CHECK(rig.ac.target_temperature == (invalid_mode ? 22 : 27));
+    }
+}
+
 void stable_targets_and_atomic_rejection() {
     Rig rig(true);
     rig.prime(); // Remember cool 22.
@@ -321,6 +455,9 @@ int main() {
     optimistic_state_and_failures();
     generations_and_reconciliation();
     unknown_fields_and_presets();
+    fan_status_reporting();
+    grouped_fan_display_preserves_confirmation();
+    temperature_memory_with_unknown_fields();
     stable_targets_and_atomic_rejection();
     display_reconciliation_and_instances();
     temperature_units();

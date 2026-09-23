@@ -85,7 +85,29 @@ Synthetic cases are not hardware validation.
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
 19.12 host toolchain does not support these sanitizers, so local Windows tests
-run without them. See [protocol evidence and API](../doc/protocol.md).
+run without them. See the [protocol reference](../doc/protocol.md).
+
+Fan regressions preserve every historical mapping, recognize raw status `1` as
+Auto without changing command bytes, and reject other aliases in confirmation.
+They cover already-Auto requests without redundant setters, Low-to-Auto
+confirmation through an explicit status poll, ignored class-`65` replies,
+optimistic/reported presentation, and expiry-free completion. Temperature-memory
+tests cover unknown fan/room readings and invalid mode/target retention.
+Five-speed presentation groups speeds 1/2 as Low and 3/4 as Medium without
+warnings. Integration tests verify that requesting Low/Medium from speed 2/4
+still sends the unchanged speed-1/3 command and waits for exact feedback,
+in both optimistic and device-reported modes. Other unknown codes remain unknown.
+`fixtures/fan_auto_status_82.hex` is a packet-only maintainer capture dated
+2026-09-23 at 14:27:38.396 (82 bytes, checksum `0706`), not synthetic data.
+It reports Auto before and after the HA Auto command; the Low-to-Auto transition
+in tests is synthetic. The model/module and deployed component revision were
+not supplied with that capture. The documented fan mapping is scoped to
+Tornado TOP-INV-120A (WIFI) with AEH-W4F1. A separate remote sweep through
+Auto, 5, 4, 3, 2, 1, Auto produced 20 complete status frames and 20 queries
+with valid lengths/checksums. Auto appeared at 14:19:07.312 and 14:20:22.315.
+The HA capture's Auto request at 14:27:37.080 expired at 14:27:47.100 because
+the old transport compared raw feedback `1` with internal Auto `0`.
+See [fan decoding and confirmation](../doc/protocol.md#fan-status-and-auto-confirmation).
 
 Generated response examples are **synthetic**, not hardware captures.
 `fixtures/status_82.hex` is the single sanitized RX frame at `08:57:01.087` in
@@ -123,6 +145,8 @@ correlation require separate evidence. The stubs do not emulate the physical
 UART driver or Home Assistant. Firmware compilation verifies the actual ESPHome
 API surface; it is not a hardware test or a measured callback-latency guarantee.
 
+## Dry adjustment captures
+
 Dry readback fixtures are packet-only **decoded** frames from maintainer
 attachments on 2026-09-23 (unit model unspecified, ESPHome 2026.8.2). They are
 not public issue attachments. Tests reapply wire stuffing before feeding the
@@ -133,6 +157,52 @@ component; `dry_minus_1.hex` contains a payload `F4` byte.
 | `dry_minus_1.hex` | `pasted-text-a4da7110-4a78-44e0-a7f9-80ff45f15360.txt` | 11:41:27.792 | -1 | 28 | `0703` |
 | `dry_minus_4.hex` | `pasted-text-b51e80ea-4dff-4e81-b845-afa063d7f439.txt` | 12:18:42.687 | -4 | 23 | `0776` |
 | `dry_plus_7.hex` | `pasted-text-25ba35ea-f510-4638-a5e4-94d8b773acc6.txt` | 12:15:01.175 | +7 | 34 | `06E9` |
+
+## Control-response captures
+
+The following packet-only fixtures come from the maintainer's instrumented
+2026-09-22 captures, on a unit with unspecified model/module. Firmware reported
+ESPHome 2026.8.2 (compiled September 22 at 11:34:37); the log-viewer CLI reported
+2026.9.0. These are complete **decoded RX bytes**, reconstructed from the
+component's bounded `RX decoded` chunks, not arbitrary UART log fragments.
+There are no interior `F4` bytes in these four packets, so wire bytes are
+identical. Original private logs and network identifiers are not included.
+
+Across the four original instrumented captures, all 100 complete TX/RX packets
+passed envelope, decoded-length and checksum checks: five control transmissions
+and five `65` replies, plus 45 polls and 45 `66` replies. All RX frames were
+82 decoded bytes. Three control/poll pairs differed only at class offset 13
+and checksum offset 79; the power-on pair also differed at fan offset 16.
+The Cool-target pair differed only at offsets 13 and 45, with an unchanged
+checksum because the changes cancel.
+
+| Fixture | Capture / first chunk timestamp | Class | Checksum |
+| --- | --- | --- | --- |
+| `cool_control_65.hex` | `cooling-26-27.txt`, `12:08:37.055` | `65` | `0653` |
+| `cool_poll_66.hex` | `cooling-26-27.txt`, `12:08:37.581` | `66` | `0653` |
+| `dry_control_65.hex` | `dry-change_temp_through_ha.txt`, `12:10:52.037` | `65` | `05A5` |
+| `dry_poll_66.hex` | `dry-change_temp_through_ha.txt`, `12:10:52.578` | `66` | `05A6` |
+
+The Cool pair followed a target-27 request; the Dry pair followed a target-26
+request but still reports target 27 and neutral adjustment. Python integrity
+tests independently assert headers, length, checksums and exact pairwise
+differences. Native tests replay every fragmentation boundary with signed and
+unsigned `char`: the parser accepts both classes, but only `66` decodes status.
+Component diagnostic tests use these replies with synthetic baselines/timing to
+check that `65` cannot satisfy baseline polling, publish climate/sensor values,
+refresh status age/health, or confirm a command even when its target matches.
+Cool confirms only on the matching poll; Dry expires after unchanged polls,
+without resending the setter. Unknown classes/lengths and bad checksums retain
+their separate diagnostics. See
+[control-response handling](../doc/protocol.md#control-responses-class-0x65)
+and the [pinned external reference](../doc/protocol.md#references).
+
+The on-device check on 2026-09-23 exercised Cool target 25 -> 24 -> 25 C.
+Each request sent one setter and logged the new `65` diagnostic before
+confirmation on a matching `66` poll (operations 2 and 3 at 15:24:43.689 and
+15:25:09.832). Complete packets passed framing/checksum checks with no timeout
+or expiry messages. The separate `fan=1` warnings were still present in that
+firmware; this check predates integration of the fan-status fix.
 
 ## Hardware acceptance (manual, not run by these tests)
 
