@@ -30,7 +30,7 @@ bool Engine::matches(const DeviceStatus &s, const Request &r) {
     if ((r.fields & TEMPERATURE) &&
         std::fabs(temperature::from_device(s.indoor_temperature_setting, r.fahrenheit) - r.temperature) > 0.001f)
         return false;
-    if ((r.fields & FAN) && s.wind_status != r.fan) return false;
+    if ((r.fields & FAN) && normalize_fan_status(s.wind_status) != r.fan) return false;
     if ((r.fields & SWING) && swing(s) != r.swing) return false;
     if ((r.fields & FIELD_DISPLAY) && s.back_led != r.display) return false;
     return (r.fields & PRESET) == 0;  // No verified feedback mapping.
