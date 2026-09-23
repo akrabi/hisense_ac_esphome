@@ -139,9 +139,63 @@ void command_packet_lifetime() {
     CHECK(second_host.writes.back() == Bytes(golden::temp_27_C, golden::temp_27_C + sizeof(golden::temp_27_C)));
 }
 
+void fan_status_confirmation() {
+    for (uint8_t requested : {0, 2, 10, 14, 18}) {
+        transport::Request request;
+        request.fields = transport::FAN;
+        request.fan = requested;
+        for (unsigned raw = 0; raw <= 255; ++raw) {
+            auto device = state();
+            device.wind_status = static_cast<uint8_t>(raw);
+            CHECK(transport::Engine::matches(device, request) ==
+                  (raw == requested || (raw == 1 && requested == 0)));
+        }
+    }
+    for (uint8_t raw : {1, 12, 16, 255}) {
+        Host host;
+        transport::Engine engine(&host);
+        transport::Request invalid;
+        invalid.fields = transport::FAN;
+        invalid.fan = raw;
+        uint32_t generation;
+        CHECK(!engine.enqueue(invalid, 0, generation)); // Status alias is not a command.
+    }
+
+    for (uint8_t initial : {0, 1, 10}) {
+        for (uint8_t reported : {0, 1}) {
+            Host host;
+            transport::Engine engine(&host);
+            transport::Request request;
+            request.fields = transport::FAN;
+            request.fan = 0;
+            uint32_t generation;
+            CHECK(engine.enqueue(request, 0, generation));
+            auto device = state();
+            device.wind_status = initial;
+            engine.tick(0);
+            engine.receive(device, 100);
+            engine.tick(100);
+            if (initial == 10) {
+                CHECK(host.writes.back() == Bytes(golden::speed_auto, golden::speed_auto + sizeof(golden::speed_auto)));
+                device.wind_status = reported;
+                engine.receive(device, 150); // Early feedback cannot confirm the setter.
+                CHECK(host.results.empty());
+                tick(engine, 101, 800);
+                engine.receive(device, 800);
+                CHECK(host.writes.size() == 3);
+            } else {
+                CHECK(host.writes.size() == 1); // Already Auto: no redundant setter.
+            }
+            CHECK(!engine.busy());
+            CHECK(host.results.size() == 1 && host.results[0].second == transport::Result::CONFIRMED);
+        }
+    }
+}
+
 int main() {
     swing_transitions();
     command_packet_lifetime();
+    fan_status_confirmation();
     transport::Request temp;
     temp.fields = transport::TEMPERATURE; temp.temperature = 23;
     uint32_t generation;

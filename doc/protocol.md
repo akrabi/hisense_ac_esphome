@@ -154,10 +154,63 @@ This does not make the response class itself a success indicator or establish
 requested-value confirmation. No result-code handling, alternate status
 decoder, or new command is enabled from this external reference.
 
+## Fan status and Auto confirmation
+
+Captures dated 2026-09-23 establish the following decoded byte-16
+values on one unit with five physical fan speeds (model: Tornado TOP-INV-120A (WIFI), module: AEH-W4F1).
+The remote was cycled through Auto, 5, 4, 3, 2, 1, Auto in Cool at 24 C.
+All 20 complete status frames and 20 poll requests pass length/checksum checks.
+
+| Remote setting | Raw status (hex / decimal) | Component interpretation |
+| --- | --- | --- |
+| Auto | `01` / 1 | Auto |
+| 5 | `12` / 18 | High |
+| 4 | `10` / 16 | Medium (display grouping) |
+| 3 | `0E` / 14 | Medium |
+| 2 | `0C` / 12 | Low (display grouping) |
+| 1 | `0A` / 10 | Low |
+
+The first Auto report was at 14:19:07.312; the return to Auto was at
+14:20:22.315. The old component continued displaying High or Low for Auto
+because it retained a previous recognized fan value.
+
+A separate HA capture shows an Auto request at 14:27:37.080, the unchanged
+`speed_auto` command at 14:27:37.633, and repeated status-class `66` responses
+with fan `01`. The old operation expired at 14:27:47.100 because it compared
+raw feedback `1` with internal Auto setting `0`. This capture already reports
+`01` before the request: it reproduces an already-Auto request with a stale
+Low display, not a physical Low-to-Auto transition. Its class-`65` reply is
+still not treated as confirmation.
+
+`tests/fixtures/fan_auto_status_82.hex` retains only the complete class-`66`
+frame at 14:27:38.396 from that capture (82 bytes, checksum `0706`).
+Raw decoding/logging preserves `1`; presentation and transport matching share
+`normalize_fan_status()`, mapping only `1` to the existing internal Auto value
+`0`. Legacy status `0` remains accepted as Auto for compatibility. Outgoing
+commands, accepted request values, and the other existing mappings are unchanged.
+For display only, remote speeds 1/2 are grouped as Low and 3/4 as Medium;
+speed 5 remains High. Raw values `12` and `16` are recognized without an
+unsupported-field warning, but remain distinct in stored feedback and command
+matching. Selecting Low/Medium/High still requests speed 1/3/5 respectively:
+speed 2 cannot satisfy or suppress a Low command, nor speed 4 a Medium command.
+This intentionally loses exact speed detail in HA without weakening confirmation.
+
+The external
+[protocol reference at revision 96f355b](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c)
+uses `xm_FLR2value` for fan/status feedback and explicitly labels `1` as Auto.
+Its other receive values differ: off `0`, mute `2/3`, weak `4`, middle `6`,
+strong `8`, and additional Auto values `5/7/9`. Its send table is separate.
+Do not import that entire mapping, infer a bit mask, or derive new command
+bytes from status values. Only Auto `1` is added to command matching; the
+five-speed display grouping comes from the maintainer capture. Quiet remains the
+existing code `2`; it was not exercised by these captures and is not assumed
+to be one of the five remote speeds. Individual commands for speeds 2/4 and
+cross-model semantics remain unverified.
+
 ## Dry-mode adjustment
 
-Evidence scope: one unit with unspecified model, maintainer captures dated
-2026-09-22, related to [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
+Evidence scope: captures dated
+2026-09-22 from Tornado TOP-INV-120A (WIFI) with AEH-W4F1, related to [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
 Cross-model behavior is unverified.
 
 In Dry mode (mode code 3), the **upper nibble of decoded status byte 26**
@@ -201,7 +254,7 @@ write offset and update-enable bits remain unknown.**
 | --- | --- | --- |
 | Class byte 13 = `0x65` | 82-byte status-shaped replies followed control commands, including successful Cool and unconfirmed Dry requests | Explicitly logged as control responses; not used for status or confirmation (see above) |
 | Class byte 13 = `0x66` | Explicit polls returned recognized status | Requested fields must match to confirm an operation |
-| Fan byte 16 = `0x01` | Present in both Cool and Dry | Meaning unknown; displayed AUTO/LOW may be retained state |
+| Fan byte 16 = `0x01` | Present in both Cool and Dry | Later remote capture establishes Auto; see fan evidence above |
 | Byte 34, including `drying` mask `0xF0` | Remained zero during observed Dry adjustments | Purpose unverified; no demonstrated link to the adjustment |
 
 ## Complete status field reference
@@ -250,7 +303,7 @@ No additional scaling or multi-byte value construction is implied.
 | Offset | Mask / original type | Original field | Usage | Verification | Description |
 | --- | --- | --- | --- | --- | --- |
 | 0-15 | `uint8_t[16]` | `header` | Framing | Partial | See envelope and class checks above; not all header bytes have established meanings |
-| 16 | u8 | `wind_status` | Used | Unverified | Fan/air-volume code; observed code 1 remains unmapped |
+| 16 | u8 | `wind_status` | Used | Partially verified | Auto `1` and five-speed readback verified on one unit; see fan evidence above |
 | 17 | u8 | `sleep_status` | Unused | Unverified | Sleep code |
 | 18 | `0x03` | `direction_status` | Unused | Unverified | Wind direction |
 | 18 | `0x0C` | `run_status` | Used | Unverified | Run bits, shifted right 2 |
@@ -461,6 +514,12 @@ Climate values, pending targets, and remembered heat/cool setpoints are Celsius.
 Fahrenheit setpoints are rounded to whole Fahrenheit degrees before transmission;
 optimistic state shows that representable value converted back to Celsius.
 Invalid/non-finite or out-of-range requests are rejected before integer conversion.
+
+Settled Heat/Cool target memory requires a valid mode and target in the current
+report, no active operation, and no pending mode/target change. An unsupported
+fan code or invalid room-temperature reading does not block saving an otherwise
+valid target. Invalid mode/target reports cannot save retained values as new
+setpoints; intermediate operation targets are still excluded.
 
 The temperature commands encode 16-32 C and 61-90 F. Default visual limits remain
 16-30 C in Celsius mode. Fahrenheit mode uses 61-86 F expressed in Celsius
