@@ -237,7 +237,7 @@ Low/Medium/High. The grouping is display-only: speed 2 does not confirm a
 Low command, and speed 4 does not confirm a Medium command. These recognized
 intermediate speeds no longer cause unsupported-field warnings. Quiet is
 unchanged and was not verified in that capture. See
-[fan protocol evidence](../protocol.md#fan-status-and-auto-confirmation).
+[fan decoding and confirmation](../protocol.md#fan-status-and-auto-confirmation).
 
 The separate `hisense_ac.protocol` DEBUG tag dumps complete transmitted packets
 (`TX wire`, including byte stuffing) and checksum-valid received frames
