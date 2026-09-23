@@ -1,512 +1,194 @@
-# UART receive protocol and evidence
+# Hisense UART protocol
 
-## Supported envelope
+This describes the protocol subset supported by this component, not a universal
+Hisense specification. All offsets are **zero-based decoded frame offsets**,
+after removing byte stuffing. Fixture provenance and validation results belong
+in [tests/README.md](../tests/README.md).
 
-The receive parser supports decoded frames of 9–128 bytes. This bounded capacity
-covers the supported 82-byte status layout; larger packets are rejected:
+## Frame format
 
-| Decoded offset | Meaning |
+The bus uses **9600 baud, 8 data bits, no parity, 1 stop bit**. One component
+exclusively owns each UART; other readers, writers and `uart.debug` are unsupported.
+
+| Offset | Meaning |
 | --- | --- |
-| 0–1 | Header `F4 F5` |
-| 2–3 | Supported response format `01 40` |
-| 4 | Payload length; total decoded length is this value + 9 |
-| 5 through size − 5 | Payload |
-| size − 4, size − 3 | Unsigned additive checksum, big-endian |
-| size − 2, size − 1 | Footer `F4 FB` |
+| 0-1 | Header `F4 F5` |
+| 2-3 | Commands: `00 40`; responses: `01 40` |
+| 4 | Length value; total decoded size is this value + 9 |
+| 5 through size - 5 | Payload, including message class at offset 13 when present |
+| size - 4, size - 3 | Additive checksum, big-endian |
+| size - 2, size - 1 | Footer `F4 FB` |
 
-The checksum sums decoded offsets 2 through size − 5 inclusive. Interior `F4`
-bytes, including checksum bytes, must be doubled on the wire; each pair contributes
-one decoded byte and is summed only once. Header/footer markers are not stuffed.
-Wire size may be larger because of stuffing. The length field can theoretically
-represent up to 264 decoded bytes (`255 + 9`), but that does not establish another
-supported status format or require allocating its maximum size.
+The checksum is the unsigned 16-bit sum of decoded bytes from offset 2 through
+size - 5, inclusive. Interior `F4` bytes, including checksum bytes, are doubled
+on the wire; each pair contributes one decoded byte. Header/footer markers are
+not stuffed, and stuffing does not change the declared length.
 
-Each component has its own fixed-capacity parser and decoded snapshot. Partial
-frames expire after **100 ms between consumed bytes**, using rollover-safe
-elapsed time. This is a conservative software recovery threshold, not measured
-AC timing. UART buffering means consumption times are not wire-arrival times.
-Bad checksums, malformed escapes/lengths/footers and timeouts never acknowledge
-a command. Resynchronization recognizes `F4 F5`, including overlapping headers
-and a new header beginning where an invalid footer was expected.
+The receive parser accepts **9-128 decoded bytes**. Partial frames expire after
+100 ms between consumed bytes; this is a software recovery threshold, not a
+measured bus requirement. Invalid headers, lengths, escapes, checksums and
+footers are rejected, with resynchronization at `F4 F5`.
+
+## Message classes
+
+| Class at offset 13 | Direction / purpose | Component handling |
+| --- | --- | --- |
+| `0x65` | Control command | Sends the requested control bytes |
+| `0x65` | Control response | Recognizes the 82-byte shape for diagnostics only |
+| `0x66` | Status query | Sends a read-only poll |
+| `0x66` | Status response | Decodes only checksum-valid 82-byte frames |
+
+The status query is:
+
+```text
+F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
+```
+
+Other response classes and lengths are not decoded as status. In particular,
+160-byte status variants are unsupported, even when their checksums are valid.
+
+### Control responses (class `0x65`)
+
+An 82-byte control response can contain status-shaped data, but its class alone
+does not indicate success or rejection. The component logs it as a control
+response without publishing state, refreshing communication health/status age,
+or advancing an operation. Confirmation requires matching fields in a subsequent
+`0x66` response after an explicit poll. No result-code or short-ACK handling is
+implemented.
 
 ## Supported status layout
 
-Only checksum-valid **82-byte** responses with **offset 13 = `0x66`**
-are decoded as status (consumed fields end at offset 47). Both length and class
-are required. Other lengths within the parser's bound remain framing-only:
-a valid envelope does not establish a status layout.
-This is based on:
+An 82-byte status response has length byte `49`, class `66`, data at offsets
+16-77, checksum at 78-79, and footer at 80-81. The component consumes:
 
-- The historical component's wire struct: 16 header bytes, 56 status bytes,
-  six extra bytes and four checksum/footer bytes (82 decoded bytes, regardless
-  of compiler-added alignment padding).
-- The independently checked raw public capture described in
-  [tests/README.md](../tests/README.md): header `F4 F5 01 40 49`, class `66`,
-  total 82 bytes and checksum `04 C3`. Source revision and timestamp are pinned.
-  It is not a local hardware capture; its exact indoor-unit model is unknown.
-- [Issue #1](https://github.com/akrabi/hisense_ac_esphome/issues/1), first RX at
-  `19:31:05`: 83 wire bytes decode to 82 bytes because payload byte 50 (`F4`) is
-  doubled. Declared length `49`, checksum `04 9B`.
-
-The 160-byte ADT-09UX4RBL8 capture in
-[issue #6](https://github.com/akrabi/hisense_ac_esphome/issues/6) has valid framing
-and checksum (`09 BA`), but its status-field meanings and control compatibility
-are unverified. Matching header bytes do not prove a shared payload layout.
-That fixture is retained to test rejection without publishing guessed status;
-160-byte decoding is deliberately excluded from this branch.
-
-This is **not a claim of model-specific control,
-capability, sensor meaning or sentinel handling**. No tail fields are inferred
-from expanded fork structs; offsets after the consumed prefix remain opaque
-but are included in checksum verification through the final payload byte.
-No zoffypal v3 or other model-specific protocol is enabled.
-
-Do not infer response semantics from inconsistent upstream prose or fixture
-descriptions. Short responses and other classes/lengths are deliberately not
-decoded or treated as command success. No short acknowledgment format or unique
-transaction correlation has been verified. A recognized status may update the
-reported state; it does not by itself prove execution of the last command.
-The transaction engine below checks requested fields after an explicit poll.
-
-The decoder preserves only mappings used by the old component:
-
-| Offset | Existing field / conversion |
+| Offset | Field / decoding |
 | --- | --- |
-| 16 | Fan code |
-| 18 | Run bits `(byte & 0x0c) >> 2`, mode `byte >> 4` |
-| 19, 20, 21 | Setpoint, room temperature, pipe temperature; unsigned |
-| 22, 23 | Existing humidity fields; explicit signed 8-bit conversion |
-| 35 | Horizontal swing `0x40`, vertical swing `0x80` |
-| 37 | Display backlight `0x80` |
-| 41, 42, 43 | Existing compressor frequency / setting / sent fields |
-| 44–47 | Outdoor, condenser, exhaust, target exhaust; signed conversion |
+| 16 | Fan code; see below |
+| 18 | Run: `(byte & 0x0C) >> 2`; mode: `byte >> 4` |
+| 19 | Ordinary target temperature, unsigned |
+| 20 | Room temperature, unsigned |
+| 21 | Indoor pipe temperature, unsigned |
+| 22-23 | Humidity setting / reading, signed 8-bit |
+| 35 | Horizontal swing: `0x40`; vertical swing: `0x80` |
+| 37 | Display backlight: `0x80` |
+| 41-43 | Compressor frequency / setting / sent frequency, unsigned |
+| 44-47 | Outdoor / condenser / exhaust / target exhaust temperatures, signed 8-bit |
 
-These are **compatibility mappings**, not newly verified measurements.
-In particular, humidity meanings and compressor-field ordering are not proven
-across models. Display feedback through `back_led` (byte 37, mask `0x80`) is
-verified on ACOND ASTI-09UW4RVEDC00 / AEH-W4B1 and independently confirmed by the
-maintainer on another device. The latter confirmation did not identify a
-model/module, so it does not add a named compatibility entry.
+Run value zero means Off; nonzero means powered on. Mode codes are `0` Fan,
+`1` Heat, `2` Cool and `3` Dry. Unknown enum values retain the last recognized
+field rather than inventing a new state. Humidity meanings, sensor scaling and
+compressor-field ordering are compatibility mappings, not verified across models.
+Unused bytes still participate in checksum validation.
 
-Unused fields from the removed packed wire struct are not new capabilities.
-Most remain **unverified**: sleep, direction, somatosensory compensation,
-Fahrenheit flags, timers, wind door/drying, dual frequency,
-efficient/low-power/heat/nature, smoke/voice/mute/smart-eye/cleaning/swap/dew,
-electrical/wind/filter/other LED flags, EEPROM/self-test/time-lapse, all fault
-and communication flags, electrical voltage/current fields, expansion threshold,
-outdoor-machine/four-way flags and reserved/extra bytes. Do not expose or decode
-them based solely on their historical names. The temperature-compensation upper
-nibble has the scoped Dry-mode readback evidence below, but is still unused by
-the decoder.
+### Fan status and Auto confirmation
 
-## Fan status and Auto confirmation
-
-Captures dated 2026-09-23 establish the following decoded byte-16
-values on one unit with five physical fan speeds (model: Tornado TOP-INV-120A (WIFI), module: AEH-W4F1).
-The remote was cycled through Auto, 5, 4, 3, 2, 1, Auto in Cool at 24 C.
-All 20 complete status frames and 20 poll requests pass length/checksum checks.
-
-| Remote setting | Raw status (hex / decimal) | Component interpretation |
+| Raw byte 16 | Presentation | Command matching |
 | --- | --- | --- |
-| Auto | `01` / 1 | Auto |
-| 5 | `12` / 18 | High |
-| 4 | `10` / 16 | Medium (display grouping) |
-| 3 | `0E` / 14 | Medium |
-| 2 | `0C` / 12 | Low (display grouping) |
-| 1 | `0A` / 10 | Low |
+| `00`, `01` | Auto | Normalized to internal Auto value `0` |
+| `02` | Quiet | Exact match |
+| `0A` (10) | Low, physical speed 1 | Confirms Low |
+| `0C` (12) | Low, physical speed 2 | Does not confirm Low |
+| `0E` (14) | Medium, physical speed 3 | Confirms Medium |
+| `10` (16) | Medium, physical speed 4 | Does not confirm Medium |
+| `12` (18) | High, physical speed 5 | Confirms High |
 
-The first Auto report was at 14:19:07.312; the return to Auto was at
-14:20:22.315. The old component continued displaying High or Low for Auto
-because it retained a previous recognized fan value.
+Five-speed readback and Auto `01` are established on Tornado TOP-INV-120A (WIFI)
+with AEH-W4F1. Auto `00` and Quiet `02` remain compatibility mappings. Low/Medium
+grouping affects presentation only: raw feedback remains distinct, and outgoing
+Low/Medium/High commands request speeds 1/3/5. Individual commands for speeds 2/4
+and cross-model mappings are unverified.
 
-A separate HA capture shows an Auto request at 14:27:37.080, the unchanged
-`speed_auto` command at 14:27:37.633, and repeated status-class `66` responses
-with fan `01`. The old operation expired at 14:27:47.100 because it compared
-raw feedback `1` with internal Auto setting `0`. This capture already reports
-`01` before the request: it reproduces an already-Auto request with a stale
-Low display, not a physical Low-to-Auto transition. Its class-`65` reply is
-still not treated as confirmation.
+### Dry-mode adjustment
 
-`tests/fixtures/fan_auto_status_82.hex` retains only the complete class-`66`
-frame at 14:27:38.396 from that capture (82 bytes, checksum `0706`).
-Raw decoding/logging preserves `1`; presentation and transport matching share
-`normalize_fan_status()`, mapping only `1` to the existing internal Auto value
-`0`. Legacy status `0` remains accepted as Auto for compatibility. Outgoing
-commands, accepted request values, and the other existing mappings are unchanged.
-For display only, remote speeds 1/2 are grouped as Low and 3/4 as Medium;
-speed 5 remains High. Raw values `12` and `16` are recognized without an
-unsupported-field warning, but remain distinct in stored feedback and command
-matching. Selecting Low/Medium/High still requests speed 1/3/5 respectively:
-speed 2 cannot satisfy or suppress a Low command, nor speed 4 a Medium command.
-This intentionally loses exact speed detail in HA without weakening confirmation.
+On Tornado TOP-INV-120A (WIFI) with AEH-W4F1, status byte 26's upper nibble encodes
+the Dry adjustment as **sign-and-magnitude**: bit 7 is the negative sign and
+bits 4-6 are magnitude 0-7. Positive values 1-7 use upper nibbles `1`-`7`;
+negative values use `9`-`F`; neutral uses `0`. Upper nibble `8` is unverified.
+The lower nibble's meaning is unknown.
 
-The external
-[protocol reference at revision 96f355b](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c)
-uses `xm_FLR2value` for fan/status feedback and explicitly labels `1` as Auto.
-Its other receive values differ: off `0`, mute `2/3`, weak `4`, middle `6`,
-strong `8`, and additional Auto values `5/7/9`. Its send table is separate.
-Do not import that entire mapping, infer a bit mask, or derive new command
-bytes from status values. Only Auto `1` is added to command matching; the
-five-speed display grouping comes from the maintainer capture. Quiet remains the
-existing code `2`; it was not exercised by these captures and is not assumed
-to be one of the five remote speeds. Individual commands for speeds 2/4 and
-cross-model semantics remain unverified.
+Byte 19 is not the adjustment. The signed interpretation applies only to Dry,
+and the adjustment's physical units and baseline are unknown. Ordinary
+temperature commands do not reliably set it. This component does not yet decode
+or write the Dry adjustment.
 
-## Dry-mode adjustment
+## Unused status fields
 
-Evidence scope: captures dated
-2026-09-22 from Tornado TOP-INV-120A (WIFI) with AEH-W4F1, related to [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
-Cross-model behavior is unverified.
+The following names and masks preserve the historical packed `Device_Status`
+layout from commit `e65774a`. They are **not implemented capabilities**. Except
+for the Dry upper nibble described above, their meanings, units and polarity are
+unverified. A fault-like name does not establish an active fault indication.
+Masks refer to bits before shifting; unqualified entries occupy a whole byte.
+Never cast a frame to a C++ bitfield struct: allocation order and padding are
+implementation-dependent.
 
-In Dry mode (mode code 3), the **upper nibble of decoded status byte 26**
-encodes the signed adjustment. All displayed values from -7 through +7 were
-confirmed:
+| Offset | Historical fields (mask where applicable) |
+| --- | --- |
+| 17 | `sleep_status` |
+| 18 | `direction_status` (`03`) |
+| 24 | `somatosensory_temperature` |
+| 25 | `somatosensory_compensation_ctrl` (`07`), `somatosensory_compensation` (`F8`) |
+| 26 | `temperature_Fahrenheit` (`07`), `temperature_compensation` (`F8`; includes unexplained bit 3) |
+| 27-33 | `timer`, `hour`, `minute`, `poweron_hour`, `poweron_minute`, `poweroff_hour`, `poweroff_minute` |
+| 34 | `wind_door` (`0F`), `drying` (`F0`; no established link to Dry adjustment) |
+| 35 | `dual_frequency` (`01`), `efficient` (`02`), `low_electricity` (`04`), `low_power` (`08`), `heat` (`10`), `nature` (`20`) |
+| 36 | `smoke` (`01`), `voice` (`02`), `mute` (`04`), `smart_eye` (`08`), `outdoor_clear` (`10`), `indoor_clear` (`20`), `swap` (`40`), `dew` (`80`) |
+| 37 | `indoor_electric` (`01`), `right_wind` (`02`), `left_wind` (`04`), `filter_reset` (`08`), `indoor_led` (`10`), `indicate_led` (`20`), `display_led` (`40`; not the supported backlight bit) |
+| 38 | `indoor_eeprom` (`01`), `sample` (`02`), reserved `rev23` (`3C`), `time_lapse` (`40`), `auto_check` (`80`) |
+| 39 | `indoor_outdoor_communication` (`01`), `indoor_zero_voltage` (`02`), `indoor_bars` (`04`), `indoor_machine_run` (`08`), `indoor_water_pump` (`10`), `indoor_humidity_sensor` (`20`), `indoor_temperature_pipe_sensor` (`40`), `indoor_temperature_sensor` (`80`) |
+| 40 | Reserved `rev25` (`07`), `eeprom_communication` (`08`), `electric_communication` (`10`), `keypad_communication` (`20`), `display_communication` (`40`), unnamed padding bit (`80`) |
+| 48 | `expand_threshold` |
+| 49-54 | `UAB_HIGH`, `UAB_LOW`, `UBC_HIGH`, `UBC_LOW`, `UCA_HIGH`, `UCA_LOW` |
+| 55-57 | `IAB`, `IBC`, `ICA` |
+| 58-60 | `generatrix_voltage_high`, `generatrix_voltage_low`, `IUV` |
+| 61 | `wind_machine` (`07`), `outdoor_machine` (`08`), `four_way` (`10`), reserved `rev46` (`E0`) |
+| 62-71 | Reserved bytes `rev47` through `rev56` |
+| 72-77 | Opaque six-byte `extra` tail |
 
-| Magnitude | Positive adjustment: byte 26 | Negative adjustment: byte 26 |
-| --- | --- | --- |
-| 0 / neutral (`--`) | `0x01` | Not observed |
-| 1 | `0x11` | `0x91` |
-| 2 | `0x21` | `0xA1` |
-| 3 | `0x31` | `0xB1` |
-| 4 | `0x41` | `0xC1` |
-| 5 | `0x51` | `0xD1` |
-| 6 | `0x61` | `0xE1` |
-| 7 | `0x71` | `0xF1` |
+These offsets apply only to the 82-byte layout. High/low names do not establish
+multi-byte values or scaling. Additional fields require model-specific
+verification before decoding or exposure.
 
-Bit 7 is the negative sign; bits 4-6 hold the magnitude (**sign-and-magnitude**,
-not two's complement). Upper-nibble value `0x8` was not observed. The lower
-nibble stayed `0x1`; its bit meanings remain unverified. The historical mask
-`0xF8` also includes unexplained bit 3, so the whole field is only partially
-verified.
+## Commands and confirmation
 
-Status byte 19 stayed at 25 C across the full adjustment range; it is not the
-adjustment value. Physical adjustment units and baseline are unknown. In Cool,
-byte 26 was `0xA1` at a target of 26 C and `0xB1` at 27 C, so the signed
-interpretation is specific to Dry mode.
+Temperature commands are 50 decoded bytes with length byte `29` and class `65`.
+Offset 19 encodes `2 * device_temperature + 1`; the remaining command body is
+fixed. Supported ranges are 16-32 C and 61-90 F. Checksums and stuffing follow
+the common frame format; the 16 C command is 51 wire bytes because its checksum
+contains `F4`.
 
-| Mode | Absolute-temperature request | Decoded command byte 19 | Reported result |
-| --- | --- | --- | --- |
-| Cool | 27 C | `0x37` | Target changed from 26 C to 27 C |
-| Dry | 26 C | `0x35` | Target stayed at 27 C; adjustment stayed neutral |
+Climate values are Celsius internally. `temperature_unit` selects wire
+encoding, not the AC's display unit. Requests are rounded to whole device-unit
+degrees; invalid or out-of-range values are rejected. Auxiliary temperature
+readings are not assumed to change units with the setpoint.
 
-The Dry request remained unconfirmed despite continued status responses; no
-explicit rejection code was identified. **The Dry-adjustment write command,
-write offset and update-enable bits remain unknown.**
+Swing commands toggle individual axes. The component reads the current state
+and confirms each toggle before sending the next. Preset feedback is unverified;
+sending preset bytes does not imply a confirmed preset.
 
-### Related response fields
+The transaction sequence is **baseline poll -> control -> settle -> confirmation
+poll**. The following are component limits, not device-protocol guarantees:
 
-| Field | Observed evidence | Verification limit |
-| --- | --- | --- |
-| Class byte 13 = `0x65` | 82-byte status-shaped replies followed control commands, including successful Cool and unconfirmed Dry requests | Not proof of success or rejection; still ignored by the decoder |
-| Class byte 13 = `0x66` | Explicit polls returned recognized status | Requested fields must match to confirm an operation |
-| Fan byte 16 = `0x01` | Present in both Cool and Dry | Later remote capture establishes Auto; see fan evidence above |
-| Byte 34, including `drying` mask `0xF0` | Remained zero during observed Dry adjustments | Purpose unverified; no demonstrated link to the adjustment |
+| Setting | Behavior |
+| --- | --- |
+| Poll interval | 5 seconds by default |
+| TX limit | 64 wire bytes, fitting the assigned hardware FIFO |
+| TX drain allowance | `ceil(wire_bytes * 10 * 1000 / 9600) + 2 ms` |
+| Control settling | 500 ms after drain before polling |
+| Poll response window | 500 ms after poll drain |
+| Operation lifetime | 10 seconds from acceptance, including queue time |
+| Pending capacity | Eight queued operations plus one active operation |
 
-## Complete status field reference
+Only supported status arriving within a poll's response window can confirm
+matching requested fields. A mismatch can trigger further polls, **never a
+setter retry**. Failure cancels dependent queued work and permits at most one
+read-only recovery poll; expired controls are not replayed after reconnection.
+There is no verified unique transaction ID, so matching status is not proof of
+unique command correlation.
 
-This reference preserves the information from the packed `Device_Status` in
-commit `e65774a` (before its replacement with a decoded snapshot). It is not a
-second decoder, a specification supplied by Hisense, or a claim that every named
-field works on every unit. `DeviceStatus` deliberately contains only consumed
-values; the parser still validates the entire frame, including unused bytes.
+## References
 
-Offsets below are **zero-based decoded frame offsets**, after removing byte
-stuffing, not positions in the escaped UART stream. They reconstruct the
-original ESP32 layout with bitfields allocated from the least-significant bit
-upward. C++ bitfield ordering is implementation-dependent; this table must not be
-used to justify casting a byte buffer to a struct. In particular, the original
-byte 40 declaration used only seven bits; its eighth bit was unnamed padding.
-
-Usage and verification are independent:
-
-- **Used**: decoded into `DeviceStatus` and consumed by the component.
-- **Unused**: documented but not decoded into `DeviceStatus`; not obsolete.
-- **Reserved**: reserved or unnamed bits/bytes without an assigned interpretation.
-- **Framing**: handled by frame validation rather than copied to `DeviceStatus`.
-
-Verification describes the available evidence, not whether the code uses a field:
-
-- **Verified**: confirmed through device observations or captured frames, with the
-  available evidence stated; not a claim that every Hisense model has been tested.
-- **Unverified**: mapping retained from the original struct without field-specific
-  confirmation recorded here. This includes used compatibility mappings.
-- **Unknown**: no established meaning.
-- **Partial**: only some fields within a grouped area have established meanings.
-
-A field with a fault-like name is not necessarily an active-high fault indication.
-Units, scaling and polarity must not be inferred solely from its name or usage.
-
-For bitfields, the mask identifies bits before shifting. Original declarations
-are unsigned; the observed Dry-mode signed interpretation is documented above.
-Single-bit fields express an originally named flag, not necessarily a verified
-boolean meaning.
-`u8` and `s8` denote the original unsigned and signed byte interpretations.
-No additional scaling or multi-byte value construction is implied.
-
-### Header and primary status
-
-| Offset | Mask / original type | Original field | Usage | Verification | Description |
-| --- | --- | --- | --- | --- | --- |
-| 0-15 | `uint8_t[16]` | `header` | Framing | Partial | See envelope and class checks above; not all header bytes have established meanings |
-| 16 | u8 | `wind_status` | Used | Partially verified | Auto `1` and five-speed readback verified on one unit; see fan evidence above |
-| 17 | u8 | `sleep_status` | Unused | Unverified | Sleep code |
-| 18 | `0x03` | `direction_status` | Unused | Unverified | Wind direction |
-| 18 | `0x0C` | `run_status` | Used | Unverified | Run bits, shifted right 2 |
-| 18 | `0xF0` | `mode_status` | Used | Unverified | Operating mode, shifted right 4 |
-| 19 | u8 | `indoor_temperature_setting` | Used | Unverified | Ordinary target; not the signed Dry adjustment |
-| 20 | u8 | `indoor_temperature_status` | Used | Unverified | Room temperature |
-| 21 | u8 | `indoor_pipe_temperature` | Used | Unverified | Pipe temperature |
-| 22 | s8 | `indoor_humidity_setting` | Used | Unverified | Retained humidity setting interpretation |
-| 23 | s8 | `indoor_humidity_status` | Used | Unverified | Retained humidity reading interpretation |
-| 24 | u8 | `somatosensory_temperature` | Unused | Unverified | Sensible temperature |
-| 25 | `0x07` | `somatosensory_compensation_ctrl` | Unused | Unverified | Compensation control |
-| 25 | `0xF8` | `somatosensory_compensation` | Unused | Unverified | Compensation value |
-| 26 | `0x07` | `temperature_Fahrenheit` | Unused | Unverified | Fahrenheit display field, not verified protocol-unit detection |
-| 26 | `0xF8` | `temperature_compensation` | Unused | Partial | Upper nibble `0xF0` verified as signed Dry adjustment on the tested unit; bit 3 and other-mode semantics unverified |
-| 27 | u8 | `timer` | Unused | Unverified | Timer |
-| 28 | u8 | `hour` | Unused | Unverified | Hour |
-| 29 | u8 | `minute` | Unused | Unverified | Minute |
-| 30 | u8 | `poweron_hour` | Unused | Unverified | Power-on hour |
-| 31 | u8 | `poweron_minute` | Unused | Unverified | Power-on minute |
-| 32 | u8 | `poweroff_hour` | Unused | Unverified | Power-off hour |
-| 33 | u8 | `poweroff_minute` | Unused | Unverified | Power-off minute |
-| 34 | `0x0F` | `wind_door` | Unused | Unverified | Wind-door field |
-| 34 | `0xF0` | `drying` | Unused | Unverified | Historical name; remained zero during observed Dry adjustments |
-
-### Feature, display and diagnostic flags
-
-| Offset | Mask | Original field | Usage | Verification | Description |
-| --- | --- | --- | --- | --- | --- |
-| 35 | `0x01` | `dual_frequency` | Unused | Unverified | Meaning not confirmed |
-| 35 | `0x02` | `efficient` | Unused | Unverified | Meaning not confirmed |
-| 35 | `0x04` | `low_electricity` | Unused | Unverified | Save electricity |
-| 35 | `0x08` | `low_power` | Unused | Unverified | Energy saving |
-| 35 | `0x10` | `heat` | Unused | Unverified | Heating air |
-| 35 | `0x20` | `nature` | Unused | Unverified | Natural wind |
-| 35 | `0x40` | `left_right` | Used | Unverified | Horizontal swing |
-| 35 | `0x80` | `up_down` | Used | Unverified | Vertical swing |
-| 36 | `0x01` | `smoke` | Unused | Unverified | Smoke removal |
-| 36 | `0x02` | `voice` | Unused | Unverified | Meaning not confirmed |
-| 36 | `0x04` | `mute` | Unused | Unverified | Meaning not confirmed |
-| 36 | `0x08` | `smart_eye` | Unused | Unverified | Meaning not confirmed |
-| 36 | `0x10` | `outdoor_clear` | Unused | Unverified | Outdoor cleaning |
-| 36 | `0x20` | `indoor_clear` | Unused | Unverified | Indoor cleaning |
-| 36 | `0x40` | `swap` | Unused | Unverified | Change the wind |
-| 36 | `0x80` | `dew` | Unused | Unverified | Fresh |
-| 37 | `0x01` | `indoor_electric` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x02` | `right_wind` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x04` | `left_wind` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x08` | `filter_reset` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x10` | `indoor_led` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x20` | `indicate_led` | Unused | Unverified | Meaning not confirmed |
-| 37 | `0x40` | `display_led` | Unused | Unverified | Not the observed display-state bit on the tested ACOND unit |
-| 37 | `0x80` | `back_led` | Used | Verified | Display state; confirmed on the ACOND unit and the maintainer's device (see evidence above) |
-| 38 | `0x01` | `indoor_eeprom` | Unused | Unverified | EEPROM |
-| 38 | `0x02` | `sample` | Unused | Unverified | Meaning not confirmed |
-| 38 | `0x3C` | `rev23` | Reserved | Unknown | Four reserved bits |
-| 38 | `0x40` | `time_lapse` | Unused | Unverified | Meaning not confirmed |
-| 38 | `0x80` | `auto_check` | Unused | Unverified | Self-test |
-| 39 | `0x01` | `indoor_outdoor_communication` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x02` | `indoor_zero_voltage` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x04` | `indoor_bars` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x08` | `indoor_machine_run` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x10` | `indoor_water_pump` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x20` | `indoor_humidity_sensor` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x40` | `indoor_temperature_pipe_sensor` | Unused | Unverified | Meaning not confirmed |
-| 39 | `0x80` | `indoor_temperature_sensor` | Unused | Unverified | Meaning not confirmed |
-| 40 | `0x07` | `rev25` | Reserved | Unknown | Three reserved bits |
-| 40 | `0x08` | `eeprom_communication` | Unused | Unverified | Meaning not confirmed |
-| 40 | `0x10` | `electric_communication` | Unused | Unverified | Meaning not confirmed |
-| 40 | `0x20` | `keypad_communication` | Unused | Unverified | Meaning not confirmed |
-| 40 | `0x40` | `display_communication` | Unused | Unverified | Meaning not confirmed |
-| 40 | `0x80` | (unnamed) | Reserved | Unknown | Unused bit in the original declaration |
-
-### Compressor, electrical fields and trailing data
-
-| Offset | Mask / original type | Original field | Usage | Verification | Description |
-| --- | --- | --- | --- | --- | --- |
-| 41 | u8 | `compressor_frequency` | Used | Unverified | Compressor frequency |
-| 42 | u8 | `compressor_frequency_setting` | Used | Unverified | Compressor frequency setting |
-| 43 | u8 | `compressor_frequency_send` | Used | Unverified | Sent compressor frequency |
-| 44 | s8 | `outdoor_temperature` | Used | Unverified | Retained temperature interpretation |
-| 45 | s8 | `outdoor_condenser_temperature` | Used | Unverified | Retained temperature interpretation |
-| 46 | s8 | `compressor_exhaust_temperature` | Used | Unverified | Retained temperature interpretation |
-| 47 | s8 | `target_exhaust_temperature` | Used | Unverified | Retained temperature interpretation |
-| 48 | u8 | `expand_threshold` | Unused | Unverified | Expansion threshold |
-| 49 | u8 | `UAB_HIGH` | Unused | Unverified | Named high byte, unverified units/scaling |
-| 50 | u8 | `UAB_LOW` | Unused | Unverified | Named low byte |
-| 51 | u8 | `UBC_HIGH` | Unused | Unverified | Named high byte |
-| 52 | u8 | `UBC_LOW` | Unused | Unverified | Named low byte |
-| 53 | u8 | `UCA_HIGH` | Unused | Unverified | Named high byte |
-| 54 | u8 | `UCA_LOW` | Unused | Unverified | Named low byte |
-| 55 | u8 | `IAB` | Unused | Unverified | Meaning not confirmed |
-| 56 | u8 | `IBC` | Unused | Unverified | Meaning not confirmed |
-| 57 | u8 | `ICA` | Unused | Unverified | Meaning not confirmed |
-| 58 | u8 | `generatrix_voltage_high` | Unused | Unverified | Named high byte |
-| 59 | u8 | `generatrix_voltage_low` | Unused | Unverified | Named low byte |
-| 60 | u8 | `IUV` | Unused | Unverified | Meaning not confirmed |
-| 61 | `0x07` | `wind_machine` | Unused | Unverified | Meaning not confirmed |
-| 61 | `0x08` | `outdoor_machine` | Unused | Unverified | Meaning not confirmed |
-| 61 | `0x10` | `four_way` | Unused | Unverified | Meaning not confirmed |
-| 61 | `0xE0` | `rev46` | Reserved | Unknown | Three reserved bits |
-| 62-71 | ten u8 fields | `rev47` through `rev56`, respectively | Reserved | Unknown | One reserved byte per field |
-| 72-77 | `uint8_t[6]` | `extra` | Unused | Unknown | Original six-byte tail |
-| 78-79 | originally `uint16_t` | `chk_sum` | Framing | Verified | Decoded explicitly as big-endian, not native-endian struct access; see captures above |
-| 80-81 | `uint8_t[2]` | `foooter` | Framing | Verified | `F4 FB`; original spelling retained; see captures above |
-
-The trailing offsets above describe **only the original 82-byte frame layout**.
-For another frame length, the checksum/footer positions are relative to its
-validated end; do not assume that an extended tail shares these fixed positions
-or that its extra bytes have known meanings. Compiler tail padding from the old
-`aligned(4)` attribute is not protocol data.
-
-To add a feature, verify the field meaning on the relevant model, add explicit
-decoding and regression evidence, and then extend `DeviceStatus` if the runtime
-needs the value. Do not decode-and-discard fields just to mirror this reference.
-
-## Pure C++ API
-
-`protocol::FrameParser::feed(uint8_t byte, uint32_t now_ms)` returns zero until a
-complete valid envelope arrives, then its decoded size. `data()` exposes that
-frame until the next `feed()` call. Consume or copy it before feeding more bytes.
-`reset()` clears all framing/escape/timestamp state. `expire(now_ms)` lets the
-component discard a stale partial frame even with no subsequent UART traffic.
-
-`protocol::decode_status(frame, size, DeviceStatus &out)` independently validates
-the complete envelope and the supported 82-byte layout, then assigns only
-consumed fields to the typed snapshot. On
-failure `out` is unchanged. It uses explicit unsigned masks, big-endian checksum
-decoding and signed arithmetic, never packed bitfields or a raw-buffer cast.
-
-Native tests link this production implementation. Generated frame builders in
-the tests are synthetic stimulus only; the independently retained public captures
-and all original command goldens anchor checksum/framing checks.
-
-## Asynchronous transactions
-
-Each instance owns an eight-operation pending queue and one active operation.
-`control()`, display writes, and periodic `update()` only enqueue work.
-`loop()` consumes at most 512 RX bytes per iteration and advances a timestamp-
-driven state machine; it does not sleep, flush the UART, or wait for responses.
-
-A fresh baseline status precedes an operation. Its power/mode, setpoint, fan,
-swing, preset, and display steps retain their prerequisite ordering. After a
-control packet drains, a 500 ms settling interval is followed by an explicit
-status poll. Only status received after poll drain, within its 500 ms response
-window, can satisfy that step's expected fields. A stale but valid mismatch can
-cause additional polls within the operation lifetime, never a control retry.
-
-Acceptance is atomic for combined calls. Only consecutive unsent temperature,
-fan, or display-only requests of the same kind can supersede each other; mode
-barriers and active commands are preserved. Polls are deduplicated. A failure
-cancels dependent queued work and schedules at most one read-only recovery poll.
-Queued and active operations expire 10 seconds after acceptance, including when
-there is no RX traffic, and expired controls are not replayed after reconnection.
-
-There are no verified unique transaction IDs. A late unsolicited status cannot
-always be distinguished from a poll response. Matching the expected reported
-fields is stronger than treating any packet as an ACK, but is not unique command
-correlation. Preset feedback remains unverified; sending those command bytes
-does not result in a fabricated confirmed preset.
-
-### UART backend and timing assumptions
-
-The supported native ESP32 IDF UART is exclusively owned by one AC component.
-Final validation rejects other UART consumers, direct YAML `uart.write`, debug
-callbacks and flow-control configuration. Lambdas must not bypass ownership.
-Outgoing frames are bounded to 64 wire bytes and must fit the hardware FIFO.
-
-In the inspected ESPHome 2026.8.2 / ESP-IDF 5.5.5 backend, the TX ring buffer is
-disabled. `uart_write_bytes()` copies into available FIFO space; it can wait when
-that space is insufficient. With exclusive ownership and a complete short frame
-in an idle FIFO, no line-drain wait is needed. The engine prevents another write
-until `ceil(wire_bytes * 10 * 1000 / 9600) + 2 ms` has elapsed. Compile-time and
-LP-UART runtime checks reject insufficient FIFO capacity.
-
-This is a driver-based timing model, **not a hardware latency measurement**.
-Writes taking at least 10 ms emit a warning. Other backends, manual UART access,
-and arbitrary RS485 direction-control hardware are not covered. Hardware
-acceptance must include callback latency and disconnect/burst behavior.
-
-## Reported state, diagnostics and evidence limits
-
-Climate and sensor state are published from validated snapshots, not when a
-poll is queued. By default controls also remain device-reported. Optional
-optimistic presentation overlays accepted controls only; measurements and
-compressor action remain reported. Per-field generations prevent an older
-operation from removing a newer request's presentation.
-
-Optional communication health, status age, parser-error, response-timeout and
-queue-rejection entities are documented in the configuration guide. Parser
-error counters survive parser resets, saturate rather than wrap, and reset on
-device reboot. Error logs are rate-limited and identify the last failure reason.
-Unknown payload tail meanings, named hardware faults and preset feedback are
-not inferred from legacy field names.
-
-## Swing control
-
-All 16 transitions between Off, Vertical, Horizontal and Both are supported.
-Each axis uses a toggle command, so the component first reads the actual swing
-state and confirms each change before sending another. Desired states, not
-precomputed toggles, are queued. Commands are not blindly retried: if a response
-is lost or the remote changes an axis between steps, the operation fails with a
-warning and the component requests status instead of guessing.
-
-## Temperature boundary
-
-Climate values, pending targets, and remembered heat/cool setpoints are Celsius.
-`temperature_unit` selects the protocol encoding, not the frontend display unit.
-Fahrenheit setpoints are rounded to whole Fahrenheit degrees before transmission;
-optimistic state shows that representable value converted back to Celsius.
-Invalid/non-finite or out-of-range requests are rejected before integer conversion.
-
-Settled Heat/Cool target memory requires a valid mode and target in the current
-report, no active operation, and no pending mode/target change. An unsupported
-fan code or invalid room-temperature reading does not block saving an otherwise
-valid target. Invalid mode/target reports cannot save retained values as new
-setpoints; intermediate operation targets are still excluded.
-
-The temperature commands encode 16-32 C and 61-90 F. Default visual limits remain
-16-30 C in Celsius mode. Fahrenheit mode uses 61-86 F expressed in Celsius
-(approximately 16.111-30 C), with a 5/9 C step. The component does not change the
-AC's temperature-display unit. Auxiliary temperatures retain their existing
-protocol interpretation; they are not assumed to switch units with the setpoint.
-
-## Bounded command encoding
-
-`encode_temperature(int device_temperature, bool fahrenheit, CommandPacket &out)`
-replaces the 47 repetitive temperature arrays with one immutable 44-byte decoded
-body template. Its input is the already-normalized integer **device-unit** value;
-Celsius normalization/conversion remains at the transport boundary. Only body
-offset 17 (full decoded frame offset 19) changes to `2 * value + 1`. All other
-body bytes are retained verbatim from the original commands, not reconstructed
-from guessed flag meanings. Inputs outside 16–32 C or 61–90 F return false.
-
-`encode_command(body, body_size, output, capacity, size)` accepts the existing
-decoded `00 40 length payload...` command body, without delimiters/checksum.
-It validates the declared length, sums unsigned decoded body bytes once, emits
-the big-endian checksum and doubles interior `F4` bytes. It preflights the entire
-escaped wire length against caller capacity and `MAX_COMMAND_WIRE_SIZE` (64).
-Invalid input or overflow returns false, sets output size to zero and leaves
-output bytes unchanged; commands are never truncated. Local staging also
-supports overlapping input/output buffers.
-
-The result is 50 decoded bytes for every temperature command. The original
-16 C checksum is `01 F4`, so its wire packet remains **51 bytes**, ending in
-`01 F4 F4 F4 FB`. All 77 original command fixtures independently check the common
-encoder; temperature fixtures also check the temperature builder, and the other
-30 packets remain immutable arrays, including unused variants. No unused command
-is activated or assigned new semantics by this refactor.
-
-Each transport Engine owns its temperature packet. Deferred mode-plus-temperature
-steps reference that instance-owned buffer until the active operation completes;
-queued requests contain values only and cannot overwrite it. Engines are
-non-copyable to keep these internal pointers valid. Regression tests interleave
-two engines and queue a newer temperature while an earlier temperature step
-waits for mode confirmation.
-
-The original `tests/fixtures/commands.json` is not regenerated from production.
-Native golden headers are generated from that independent snapshot only.
-Additional synthetic tests cover unsigned high-bit bytes, escaped payload and
-checksum bytes, exact/insufficient capacity, a full 64-byte wire packet, overflow,
-invalid lengths/types/temperatures and unchanged output on failure.
+- [Configuration and diagnostics](configuration/README.md)
+- [Regression tests and capture provenance](../tests/README.md)
+- [External protocol implementation, pinned revision 96f355b](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c):
+  corroborates set/query classes `101`/`102` and Auto feedback `1`; other mappings
+  must not be assumed to match this component or every model.
