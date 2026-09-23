@@ -243,8 +243,10 @@ void HisenseAC::apply_status_() {
     const float target = status_.indoor_temperature_setting;
     const float current = status_.indoor_temperature_status;
     bool unknown = false;
-    if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
-        (temp_unit == FAHRENHEIT && target > 45 && target < 91)) {
+    const bool valid_target = (temp_unit == CELSIUS && target > 7 && target < 33) ||
+                              (temp_unit == FAHRENHEIT && target > 45 && target < 91);
+    const bool valid_mode = status_.run_status == 0 || status_.mode_status <= 3;
+    if (valid_target) {
         confirmed_.temperature = temperature::from_device(status_.indoor_temperature_setting, temp_unit == FAHRENHEIT);
         confirmed_.fahrenheit = temp_unit == FAHRENHEIT;
         confirmed_.fields |= transport::TEMPERATURE;
@@ -273,9 +275,10 @@ void HisenseAC::apply_status_() {
     confirmed_.swing = (status_.left_right ? 1 : 0) | (status_.up_down ? 2 : 0);
     confirmed_.display = status_.back_led;
     confirmed_.fields |= transport::SWING | transport::FIELD_DISPLAY;
-    switch (status_.wind_status) {
-        case 0: case 2: case 10: case 14: case 18:
-            confirmed_.fan = status_.wind_status;
+    const uint8_t fan = normalize_fan_status(status_.wind_status);
+    switch (fan) {
+        case 0: case 2: case 10: case 12: case 14: case 16: case 18:
+            confirmed_.fan = fan;
             confirmed_.fields |= transport::FAN;
             break;
         default: unknown = true; break;
@@ -287,7 +290,8 @@ void HisenseAC::apply_status_() {
                  status_.mode_status, status_.wind_status, status_.indoor_temperature_setting,
                  status_.indoor_temperature_status);
     }
-    if (!unknown && !transport_.busy() && !(pending_.fields() & (transport::MODE | transport::TEMPERATURE)))
+    if (valid_target && valid_mode && !transport_.busy() &&
+        !(pending_.fields() & (transport::MODE | transport::TEMPERATURE)))
         save_target_temperture();
     set_sensor(compressor_frequency, status_.compressor_frequency);
     set_sensor(compressor_frequency_setting, status_.compressor_frequency_setting);
@@ -316,8 +320,9 @@ void HisenseAC::publish_presentation_() {
         switch (shown.fan) {
             case 0: fan_mode = climate::CLIMATE_FAN_AUTO; break;
             case 2: fan_mode = climate::CLIMATE_FAN_QUIET; break;
-            case 10: fan_mode = climate::CLIMATE_FAN_LOW; break;
-            case 14: fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
+            // Group five physical speeds for display only, not confirmation.
+            case 10: case 12: fan_mode = climate::CLIMATE_FAN_LOW; break;
+            case 14: case 16: fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
             case 18: fan_mode = climate::CLIMATE_FAN_HIGH; break;
         }
     }

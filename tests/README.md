@@ -76,6 +76,22 @@ and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
 19.12 host toolchain does not support these sanitizers, so local Windows tests
 run without them. See [protocol evidence and API](../doc/protocol.md).
 
+Fan regressions preserve every historical mapping, recognize raw status `1` as
+Auto without changing command bytes, and reject other aliases in confirmation.
+They cover already-Auto requests without redundant setters, Low-to-Auto
+confirmation through an explicit status poll, ignored class-`65` replies,
+optimistic/reported presentation, and expiry-free completion. Temperature-memory
+tests cover unknown fan/room readings and invalid mode/target retention.
+Five-speed presentation groups speeds 1/2 as Low and 3/4 as Medium without
+warnings. Integration tests verify that requesting Low/Medium from speed 2/4
+still sends the unchanged speed-1/3 command and waits for exact feedback,
+in both optimistic and device-reported modes. Other unknown codes remain unknown.
+`fixtures/fan_auto_status_82.hex` is a packet-only maintainer capture dated
+2026-09-23 at 14:27:38.396 (82 bytes, checksum `0706`), not synthetic data.
+It reports Auto before and after the HA Auto command; the Low-to-Auto transition
+in tests is synthetic. The model/module and deployed component revision were
+not supplied. See [capture context](../doc/protocol.md#fan-status-and-auto-confirmation).
+
 Generated response examples are **synthetic**, not hardware captures.
 `fixtures/status_82.hex` is the single sanitized RX frame at `08:57:01.087` in
 [this public log](https://github.com/fabiogermann/esphome_hisence_ac/blob/446f25e3f8d9c47cb299414d42b8b31ccd3d01ba/output.txt).

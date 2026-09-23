@@ -5,6 +5,12 @@
 namespace esphome {
 namespace hisense_ac {
 
+// Auto reports as 1 on the captured five-speed unit; 0 is the legacy mapping.
+// Preserve other raw values for exact command confirmation.
+constexpr uint8_t normalize_fan_status(uint8_t raw) {
+    return raw == 1 ? 0 : raw;
+}
+
 // Decoded values, not a wire layout. Only fields consumed by this component
 // are mapped; unused flags in the former packed struct remain unverified.
 struct DeviceStatus {
