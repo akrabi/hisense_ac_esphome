@@ -218,7 +218,7 @@ An accepted request is queued, not yet confirmed by the AC.
 
 Operation traces use internal protocol codes and a hexadecimal `fields` mask:
 `01` mode, `02` target temperature, `04` fan, `08` swing, `10` preset,
-`20` display (`40` is an internal power-prerequisite flag). Operation traces
+`20` display, `80` Dry adjustment (`40` is an internal power-prerequisite flag). Operation traces
 print only controls selected by the mask; an omitted mode is not an Off command.
 For example, a temperature-only request logs
 `fields=0x02 target=26.00C protocol=C`, without unrelated mode/fan values.
@@ -257,3 +257,54 @@ capturing: repeated confirmation polls can generate substantial output.
 For protocol investigations, record the physical-remote setting and action
 timestamp alongside full logs so changes can be correlated with complete frames.
 Tracing does not add support for new controls, response classes, or fan codes.
+
+### Optional Dry adjustment
+
+For units that use a signed adjustment instead of an absolute temperature in
+Dry mode, add `dry_offset` under the climate entry:
+
+```yaml
+climate:
+  - platform: hisense_ac
+    name: "Air Conditioner"
+    uart_id: uart_bus
+    temperature_unit: CELSIUS
+    dry_offset:
+      name: "Dry adjustment"
+```
+
+This creates a separate number entity with a fixed range of **-7 to +7**, step
+**1**, and **no temperature unit or device class**. Zero is neutral (`--` on
+the tested remote). The adjustment is not an absolute setpoint. Cross-model
+support is not assumed; enable it only for a unit with this Dry behavior.
+Currently it requires `temperature_unit: CELSIUS` and DRY in `supported_modes`.
+Omitting `dry_offset` preserves the existing climate behavior.
+
+The number always reports device feedback, including remote changes, even when
+the climate uses `optimistic: true`. It is unknown before valid Dry feedback,
+outside active Dry mode, on stale/lost communication, or for an unrecognized
+offset encoding. It has no boot-time restore or automatic write. A failed
+operation does not publish the requested value; a component warning reports
+the failure. Ordinary number metadata and presentation options such as
+`mode: BOX` are supported, but range/step, temperature units/classes, restore
+and optimism cannot be overridden.
+
+Changing the number queues a direct offset-only write; no intermediate neutral
+command is needed. A fresh active-Dry status is required before sending. Mode
+or offset changes between the baseline and transmission cancel that command.
+Consecutive unsent adjustment requests coalesce to the latest value; in-flight
+commands are never rewritten or blindly retried. Confirmation requires
+class-`0x66` Dry status with the requested offset. An already matching value
+needs no write. Class-`0x65` replies remain ignored.
+
+With this option configured, ordinary target-temperature requests in Dry are
+rejected, including combined calls that enter Dry with an absolute target.
+The climate target is unknown while in Dry rather than displaying a stale
+or derived absolute target (which can exceed normal setpoint limits). Room
+temperature and action remain reported. Other modes retain ordinary temperature
+control, including a combined request to leave Dry for Cool/Heat and set a target.
+The component does not automatically enter Dry when the number is changed.
+
+Remove the temporary `experimental_dry_offset` flag, template selector and test
+buttons when migrating from the hardware experiment. Replace them with the
+single `dry_offset` entry above. The old flag and test methods are not supported.

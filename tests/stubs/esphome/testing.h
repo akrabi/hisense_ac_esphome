@@ -17,6 +17,7 @@
 #define ESP_LOGV(...) ((void)0)
 #define ESP_LOGCONFIG(...) ((void)0)
 #define LOG_CLIMATE(...) ((void)0)
+#define LOG_NUMBER(...) ((void)0)
 namespace esphome {
 struct TestLog {
     std::string tag;
@@ -69,6 +70,20 @@ public:
     bool state{false};
     bool has_state() const { return !publications.empty(); }
     void publish_state(bool value) { state = value; publications.push_back(value); }
+};
+}
+namespace number {
+class Number {
+public:
+    std::vector<float> publications;
+    float state{NAN};
+    bool has_state() const { return has_state_; }
+    void set_has_state(bool value) { has_state_ = value; }
+    void publish_state(float value) { has_state_ = true; state = value; publications.push_back(value); }
+    virtual void control(float value) = 0;
+protected:
+    struct Callback { void call(float) {} } state_callback_;
+    bool has_state_{false};
 };
 }
 namespace switch_ {

@@ -63,6 +63,16 @@ bool encode_temperature(int device_temperature, bool fahrenheit, CommandPacket &
     return encode_command(body, sizeof(body), packet.data, sizeof(packet.data), packet.size);
 }
 
+bool encode_dry_offset(int offset, CommandPacket &packet) {
+    packet.size = 0;
+    if (offset < -7 || offset > 7) return false;
+    uint8_t body[sizeof(TEMPERATURE_BODY)];
+    std::memcpy(body, TEMPERATURE_BODY, sizeof(body));
+    // Offset-only variant: leave mode/update byte 18 zero; offset + update + manual at 23.
+    body[21] = static_cast<uint8_t>((dry_offset_nibble(static_cast<int8_t>(offset)) << 4) | 0x0C);
+    return encode_command(body, sizeof(body), packet.data, sizeof(packet.data), packet.size);
+}
+
 const uint8_t on[] = {
     0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01,
     0x00, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00,

@@ -24,6 +24,7 @@ def test_configuration_codegen(fixture):
     assert "hisense_ac::HisenseAC(ac_uart)" in generated
     assert "set_uart_parent(" in generated
     assert f"set_optimistic({'true' if fixture == 'full' else 'false'})" in generated
+    assert "set_dry_offset_number(" not in generated
     if fixture == "full":
         for sensor in (
             "compressor_frequency", "compressor_frequency_setting",
@@ -122,3 +123,65 @@ def test_capability_subsets(tmp_path, key, value, valid):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert (result.returncode == 0) == valid, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("unit,modes,valid", [
+    ("CELSIUS", ["OFF", "DRY"], True),
+    ("CELSIUS", ["OFF", "COOL"], False),
+    ("FAHRENHEIT", ["OFF", "DRY"], False),
+])
+def test_dry_offset_constraints(tmp_path, unit, modes, valid):
+    config = yaml.safe_load((ROOT / "tests" / "minimal.yaml").read_text())
+    config["external_components"][0]["source"]["path"] = str(ROOT / "components")
+    config["climate"][0].update(
+        dry_offset={"name": "Dry adjustment"}, temperature_unit=unit, supported_modes=modes,
+    )
+    path = tmp_path / "dry.yaml"
+    path.write_text(yaml.safe_dump(config))
+    result = subprocess.run(
+        [sys.executable, "-m", "esphome", "config", str(path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert (result.returncode == 0) == valid, result.stdout + result.stderr
+
+
+def test_dry_offset_codegen():
+    result = subprocess.run(
+        [sys.executable, "-m", "esphome", "compile",
+         str(ROOT / "tests" / "dry_offset.yaml"), "--only-generate"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    generated = (
+        ROOT / "tests" / ".esphome" / "build" / "hisense-test-dry" / "src" / "main.cpp"
+    ).read_text()
+    code = "\n".join(line.split("//", 1)[0] for line in generated.splitlines())
+    assert "hisense_ac::HisenseACDryOffsetNumber(ac)" in code
+    assert "set_dry_offset_number(dry_adjustment)" in code
+    for setter, value in [("min_value", "-7"), ("max_value", "7"), ("step", "1")]:
+        assert re.search(rf'dry_adjustment->traits\.set_{setter}\({value}(?:\.0f?)?\)', code)
+    assert "request_dry_offset_test" not in code and "TemplateSelect" not in code
+    registration = re.search(r'App\.register_number\(dry_adjustment,.*?,\s*(\d+)\);', code)
+    assert registration and int(registration.group(1)) & 0xFFFF == 0  # No unit/device class.
+
+
+@pytest.mark.parametrize("key,value", [
+    ("unit_of_measurement", "°C"),
+    ("device_class", "temperature"),
+    ("min_value", -8),
+    ("max_value", 8),
+    ("step", 0.5),
+    ("optimistic", True),
+    ("restore_value", True),
+])
+def test_dry_offset_rejects_unsupported_options(tmp_path, key, value):
+    config = yaml.safe_load((ROOT / "tests" / "minimal.yaml").read_text())
+    config["external_components"][0]["source"]["path"] = str(ROOT / "components")
+    config["climate"][0]["dry_offset"] = {"name": "Dry adjustment", key: value}
+    path = tmp_path / "dry-option.yaml"
+    path.write_text(yaml.safe_dump(config))
+    result = subprocess.run(
+        [sys.executable, "-m", "esphome", "config", str(path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr

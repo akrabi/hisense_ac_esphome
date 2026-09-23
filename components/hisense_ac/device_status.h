@@ -12,6 +12,7 @@ struct DeviceStatus {
     uint8_t run_status{0};
     uint8_t mode_status{0};
     uint8_t indoor_temperature_setting{0};
+    uint8_t temperature_compensation_raw{0};  // Byte 26; signed upper nibble applies only in Dry.
     uint8_t indoor_temperature_status{0};
     uint8_t indoor_pipe_temperature{0};
     int16_t indoor_humidity_setting{0};

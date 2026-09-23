@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#if defined(USE_NUMBER) && defined(USE_CONTROLLER_REGISTRY)
+#include "esphome/core/controller_registry.h"
+#endif
 #ifdef USE_ESP32
 #include "esphome/components/uart/uart_component_esp_idf.h"
 #include "soc/soc_caps.h"
@@ -31,7 +34,7 @@ const char *result_name(transport::Result result) {
 
 void log_request(const void *ac, uint32_t generation, const char *event, const transport::Request &request) {
 #ifdef ESPHOME_LOG_HAS_DEBUG
-    char values[6][32]{};
+    char values[7][32]{};
     if (request.fields & transport::MODE)
         std::snprintf(values[0], sizeof(values[0]), " mode=%u", static_cast<unsigned>(request.mode));
     if (request.fields & transport::TEMPERATURE)
@@ -44,9 +47,11 @@ void log_request(const void *ac, uint32_t generation, const char *event, const t
         std::snprintf(values[4], sizeof(values[4]), " preset=%u", static_cast<unsigned>(request.preset));
     if (request.fields & transport::FIELD_DISPLAY)
         std::snprintf(values[5], sizeof(values[5]), " display=%u", static_cast<unsigned>(request.display));
-    ESP_LOGD(TAG, "AC=%p Operation %u %s: fields=0x%02X%s%s%s%s%s%s protocol=%s",
+    if (request.fields & transport::DRY_OFFSET)
+        std::snprintf(values[6], sizeof(values[6]), " dry_offset=%d", static_cast<int>(request.dry_offset));
+    ESP_LOGD(TAG, "AC=%p Operation %u %s: fields=0x%02X%s%s%s%s%s%s%s protocol=%s",
              ac, static_cast<unsigned>(generation), event, static_cast<unsigned>(request.fields),
-             values[0], values[1], values[2], values[3], values[4], values[5], request.fahrenheit ? "F" : "C");
+             values[0], values[1], values[2], values[3], values[4], values[5], values[6], request.fahrenheit ? "F" : "C");
 #endif
 }
 
@@ -129,6 +134,49 @@ void HisenseACDisplaySwitch::write_state(bool state) {
     parent_->set_display(state);
 }
 
+void HisenseACDryOffsetNumber::publish_unknown_state() {
+    if (!has_state()) return;
+    // Number::publish_state() always marks the value present, even for NAN.
+    state = NAN;
+    set_has_state(false);
+    state_callback_.call(state);
+#if defined(USE_NUMBER) && defined(USE_CONTROLLER_REGISTRY)
+    ControllerRegistry::notify_number_update(this);
+#endif
+}
+
+bool HisenseAC::set_dry_offset(float offset) {
+    if (dry_offset_number_ == nullptr || !std::isfinite(offset) || offset < -7 || offset > 7 ||
+        std::trunc(offset) != offset || temp_unit != CELSIUS ||
+        !supported_modes_.count(climate::CLIMATE_MODE_DRY)) {
+        ESP_LOGW(TAG, "Dry adjustment rejected: configure dry_offset with Celsius/DRY; value must be a whole number from -7 to 7.");
+        operation_warning_ = true;
+        update_warning_();
+        return false;
+    }
+    const auto context = pending_.present(confirmed_, true);
+    if (!has_status_ || communication_warning_ || status_stale_() || status_.run_status == 0 || status_.mode_status != 3 ||
+        ((context.fields & transport::MODE) && context.mode != 3)) {
+        ESP_LOGW(TAG, "Dry adjustment rejected: active Dry mode with communication is required.");
+        operation_warning_ = true;
+        update_warning_();
+        return false;
+    }
+    transport::Request request;
+    request.fields = transport::DRY_OFFSET;
+    request.dry_offset = static_cast<int8_t>(offset);
+    uint32_t generation;
+    if (!transport_.enqueue(request, millis(), generation)) {
+        if (queue_rejections_ != UINT32_MAX) ++queue_rejections_;
+        ESP_LOGW(TAG, "Dry adjustment rejected: operation queue full.");
+        operation_warning_ = true;
+        update_warning_();
+        return false;
+    }
+    accepted_(request, generation);
+    return true;
+}
+
 void HisenseAC::setup() {
     started_at_ = millis();
     request_update();
@@ -145,6 +193,7 @@ void HisenseAC::dump_config() {
                   static_cast<unsigned>(get_update_interval()), static_cast<unsigned>(transport::RESPONSE_TIMEOUT_MS),
                   static_cast<unsigned>(transport::OPERATION_TIMEOUT_MS));
     ESP_LOGCONFIG("hisense_ac", "  Pending operation capacity: %u", static_cast<unsigned>(transport::QUEUE_CAPACITY));
+    LOG_NUMBER("  ", "Dry adjustment", dry_offset_number_);
 }
 
 void HisenseAC::loop() {
@@ -168,14 +217,18 @@ void HisenseAC::loop() {
         ESP_LOGW(TAG, "Discarded invalid UART frames: %u; last reason: %s",
                  static_cast<unsigned>(reported_frame_errors_), parser_.last_error_name());
     }
-    uint64_t stale = static_cast<uint64_t>(get_update_interval()) * 3;
-    if (stale < 10000) stale = 10000;
-    if (stale > 0x7FFFFFFF) stale = 0x7FFFFFFF;
-    if (static_cast<uint32_t>(millis() - (has_status_ ? last_status_at_ : started_at_)) >= stale)
-        communication_warning_ = true;
+    if (status_stale_()) communication_warning_ = true;
+    publish_dry_offset_();
     update_warning_();
     publish_diagnostics_();
     if (presentation_dirty_) publish_presentation_();
+}
+
+bool HisenseAC::status_stale_() const {
+    uint64_t stale = static_cast<uint64_t>(get_update_interval()) * 3;
+    if (stale < 10000) stale = 10000;
+    if (stale > 0x7FFFFFFF) stale = 0x7FFFFFFF;
+    return static_cast<uint32_t>(millis() - (has_status_ ? last_status_at_ : started_at_)) >= stale;
 }
 
 bool HisenseAC::get_response(uint8_t input) {
@@ -243,7 +296,14 @@ void HisenseAC::apply_status_() {
     const float target = status_.indoor_temperature_setting;
     const float current = status_.indoor_temperature_status;
     bool unknown = false;
-    if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
+    const bool offset_mode = dry_offset_number_ != nullptr && status_.mode_status == 3;
+    if (offset_mode) {
+        // The device's derived Dry target can exceed normal setpoint bounds.
+        confirmed_.fields &= ~transport::TEMPERATURE;
+        if (status_.run_status != 0 && (status_.temperature_compensation_raw >> 4) == 0x08) {
+            unknown = true;
+        }
+    } else if ((temp_unit == CELSIUS && target > 7 && target < 33) ||
         (temp_unit == FAHRENHEIT && target > 45 && target < 91)) {
         confirmed_.temperature = temperature::from_device(status_.indoor_temperature_setting, temp_unit == FAHRENHEIT);
         confirmed_.fahrenheit = temp_unit == FAHRENHEIT;
@@ -283,9 +343,9 @@ void HisenseAC::apply_status_() {
     if (unknown && (!has_unknown_warning_ || millis() - unknown_warning_at_ >= 30000)) {
         has_unknown_warning_ = true;
         unknown_warning_at_ = millis();
-        ESP_LOGW("hisense_ac", "Unsupported status fields: mode=%u fan=%u target=%u current=%u; retaining known fields.",
+        ESP_LOGW("hisense_ac", "Unsupported status fields: mode=%u fan=%u target=%u current=%u byte26=0x%02X; retaining known fields.",
                  status_.mode_status, status_.wind_status, status_.indoor_temperature_setting,
-                 status_.indoor_temperature_status);
+                 status_.indoor_temperature_status, static_cast<unsigned>(status_.temperature_compensation_raw));
     }
     if (!unknown && !transport_.busy() && !(pending_.fields() & (transport::MODE | transport::TEMPERATURE)))
         save_target_temperture();
@@ -308,7 +368,9 @@ void HisenseAC::publish_presentation_() {
     // back_led is verified on the ACOND unit and the maintainer's device; see doc/protocol.md.
     if (display_switch_ != nullptr && (shown.fields & transport::FIELD_DISPLAY))
         display_switch_->publish_state(shown.display);
-    if (shown.fields & transport::TEMPERATURE) target_temperature = shown.temperature;
+    if (dry_offset_number_ != nullptr && (shown.fields & transport::MODE) && shown.mode == 3)
+        target_temperature = NAN;
+    else if (shown.fields & transport::TEMPERATURE) target_temperature = shown.temperature;
     else target_temperature = NAN;
     current_temperature = reported_current_;
     fan_mode.reset();
@@ -361,9 +423,23 @@ void HisenseAC::publish_diagnostics_() {
     set_sensor(queue_rejection_count_, queue_rejections_);
 }
 
+void HisenseAC::publish_dry_offset_() {
+    if (dry_offset_number_ == nullptr) return;
+    float value = NAN;
+    const uint8_t nibble = status_.temperature_compensation_raw >> 4;
+    if (has_status_ && !communication_warning_ && status_.run_status != 0 &&
+        status_.mode_status == 3 && nibble != 0x08)
+        value = nibble & 0x08 ? -static_cast<int>(nibble & 0x07) : nibble;
+    if (std::isnan(value))
+        dry_offset_number_->publish_unknown_state();
+    else if (!dry_offset_number_->has_state() || value != dry_offset_number_->state)
+        dry_offset_number_->publish_state(value);
+}
+
 void HisenseAC::accepted_(const transport::Request &request, uint32_t generation) {
     log_request(this, generation, "ACCEPTED", request);
     latest_generation_ = generation;
+    if (request.fields == transport::DRY_OFFSET) return;  // Never overlay the climate target/mode.
     pending_.accept(request, generation, millis());
     if (optimistic_) publish_presentation_();
 }
@@ -388,6 +464,18 @@ void HisenseAC::control(const climate::ClimateCall &call) {
     if (call.get_mode().has_value()) {
         request.fields |= transport::MODE;
         valid &= supported_modes_.count(*call.get_mode()) && encode_mode(*call.get_mode(), request.mode);
+    }
+    if (dry_offset_number_ != nullptr && call.get_target_temperature().has_value()) {
+        const auto context = pending_.present(confirmed_, true);
+        const bool dry = (request.fields & transport::MODE) ? request.mode == 3 :
+                         ((context.fields & transport::MODE) && context.mode == 3) ||
+                         (has_status_ && status_.mode_status == 3);
+        if (dry) {
+            ESP_LOGW(TAG, "Climate call rejected: use the Dry adjustment number instead of an absolute target in Dry mode.");
+            operation_warning_ = true;
+            update_warning_();
+            return;
+        }
     }
     const float remembered = request.mode == 1 ? heat_tgt_temp : cool_tgt_temp;
     if (call.get_target_temperature().has_value() ||

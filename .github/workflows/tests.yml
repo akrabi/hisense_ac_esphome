@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        configuration: [minimal, full, idf, two_instances]
+        configuration: [minimal, full, idf, two_instances, dry_offset]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

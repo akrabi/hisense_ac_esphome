@@ -68,7 +68,8 @@ transaction correlation has been verified. A recognized status may update the
 reported state; it does not by itself prove execution of the last command.
 The transaction engine below checks requested fields after an explicit poll.
 
-The decoder preserves only mappings used by the old component:
+The decoder preserves compatibility mappings and the raw byte used by opt-in
+Dry adjustment:
 
 | Offset | Existing field / conversion |
 | --- | --- |
@@ -76,6 +77,7 @@ The decoder preserves only mappings used by the old component:
 | 18 | Run bits `(byte & 0x0c) >> 2`, mode `byte >> 4` |
 | 19, 20, 21 | Setpoint, room temperature, pipe temperature; unsigned |
 | 22, 23 | Existing humidity fields; explicit signed 8-bit conversion |
+| 26 | Raw compensation byte; signed interpretation only for configured Dry adjustment |
 | 35 | Horizontal swing `0x40`, vertical swing `0x80` |
 | 37 | Display backlight `0x80` |
 | 41, 42, 43 | Existing compressor frequency / setting / sent fields |
@@ -96,14 +98,13 @@ electrical/wind/filter/other LED flags, EEPROM/self-test/time-lapse, all fault
 and communication flags, electrical voltage/current fields, expansion threshold,
 outdoor-machine/four-way flags and reserved/extra bytes. Do not expose or decode
 them based solely on their historical names. The temperature-compensation upper
-nibble has the scoped Dry-mode readback evidence below, but is still unused by
-the decoder.
+nibble has the scoped Dry-mode readback evidence below and is used only when
+the Dry adjustment number is configured.
 
 ## Dry-mode adjustment
 
-Evidence scope: one unit with unspecified model, maintainer captures dated
-2026-09-22, related to [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
-Cross-model behavior is unverified.
+Verification scope: one unit with unspecified model. Cross-model behavior is
+unverified; see [issue #10](https://github.com/akrabi/hisense_ac_esphome/issues/10).
 
 In Dry mode (mode code 3), the **upper nibble of decoded status byte 26**
 encodes the signed adjustment. All displayed values from -7 through +7 were
@@ -126,8 +127,10 @@ nibble stayed `0x1`; its bit meanings remain unverified. The historical mask
 `0xF8` also includes unexplained bit 3, so the whole field is only partially
 verified.
 
-Status byte 19 stayed at 25 C across the full adjustment range; it is not the
-adjustment value. Physical adjustment units and baseline are unknown. In Cool,
+Status byte 19 is not the adjustment itself. It remained at 25 C during
+remote adjustment, but followed a neutral target of 27 C plus the signed
+adjustment during the later UART writes, including targets of 33/34 C at +6/+7.
+Neither a fixed baseline nor a universal target formula is established. In Cool,
 byte 26 was `0xA1` at a target of 26 C and `0xB1` at 27 C, so the signed
 interpretation is specific to Dry mode.
 
@@ -137,8 +140,55 @@ interpretation is specific to Dry mode.
 | Dry | 26 C | `0x35` | Target stayed at 27 C; adjustment stayed neutral |
 
 The Dry request remained unconfirmed despite continued status responses; no
-explicit rejection code was identified. **The Dry-adjustment write command,
-write offset and update-enable bits remain unknown.**
+explicit rejection code was identified.
+
+### Adjustment writes
+
+Source reference: [KTWDBC descriptor](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c#L575-L600)
+and [bit serializer](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/cmdanalysis.c#L174)
+(offsets below are zero-based decoded full-frame offsets).
+
+| Command field | Offset | Encoding | Verification |
+| --- | --- | --- | --- |
+| Mode update omitted | 18 | `0x00` | Confirmed for adjustment-only writes while already in Dry |
+| Adjustment | 23 | Upper nibble `0xF0`, sign-and-magnitude | All integer values -7 through +7 confirmed |
+| Adjustment update + manual flags | 23 | `0x08` OR `0x04` | Combined `0x0C` confirmed; necessity of each flag individually unverified |
+
+For the existing 50-byte class-`0x65` command envelope, with all other control
+payload bytes zero:
+
+| Adjustment | Command byte 23 | Checksum | Class-`0x66` status byte 26 | Verification |
+| --- | --- | --- | --- | --- |
+| -7 | `0xFC` | `02 CB` | `0xF1` | Confirmed |
+| -6 | `0xEC` | `02 BB` | `0xE1` | Confirmed |
+| -5 | `0xDC` | `02 AB` | `0xD1` | Confirmed |
+| -4 | `0xCC` | `02 9B` | `0xC1` | Confirmed |
+| -3 | `0xBC` | `02 8B` | `0xB1` | Confirmed |
+| -2 | `0xAC` | `02 7B` | `0xA1` | Confirmed |
+| -1 | `0x9C` | `02 6B` | `0x91` | Confirmed |
+| Neutral | `0x0C` | `01 DB` | `0x01` | Confirmed |
+| +1 | `0x1C` | `01 EB` | `0x11` | Confirmed |
+| +2 | `0x2C` | `01 FB` | `0x21` | Confirmed |
+| +3 | `0x3C` | `02 0B` | `0x31` | Confirmed |
+| +4 | `0x4C` | `02 1B` | `0x41` | Confirmed |
+| +5 | `0x5C` | `02 2B` | `0x51` | Confirmed |
+| +6 | `0x6C` | `02 3B` | `0x61` | Confirmed |
+| +7 | `0x7C` | `02 4B` | `0x71` | Confirmed |
+
+Command byte 18 is `0x00` for every row. Confirmation uses subsequent
+class-`0x66` status, not just a class-`0x65` response. Offset-only writes
+preserved raw fan code `0x01` and mode/run `0x38` in the observed captures.
+Other status fields can change; absence of all side effects is not established.
+Writes from neutral to every nonzero value are confirmed, as is restoration
+to neutral. Direct transitions +2 to +3, +3 to +4, +4 to +1, +1 to -1 and
+-1 to -2 are also confirmed, with raw fan code and mode/run unchanged.
+These writes do not require an intermediate neutral command.
+
+The mode-plus-adjustment variant uses command byte 18 `0x70`. Neutral and +1
+readback are also confirmed for that variant (checksums `02 4B` and `02 5B`),
+but the +1 write changed fan byte 16 from `0x01` to `0x0A`, which remained after
+neutral restoration. Use the adjustment-only form to avoid reasserting mode.
+Writes outside active Dry mode remain unverified.
 
 ### Related response fields
 
@@ -209,7 +259,7 @@ No additional scaling or multi-byte value construction is implied.
 | 25 | `0x07` | `somatosensory_compensation_ctrl` | Unused | Unverified | Compensation control |
 | 25 | `0xF8` | `somatosensory_compensation` | Unused | Unverified | Compensation value |
 | 26 | `0x07` | `temperature_Fahrenheit` | Unused | Unverified | Fahrenheit display field, not verified protocol-unit detection |
-| 26 | `0xF8` | `temperature_compensation` | Unused | Partial | Upper nibble `0xF0` verified as signed Dry adjustment on the tested unit; bit 3 and other-mode semantics unverified |
+| 26 | `0xF8` | `temperature_compensation` | Used | Partial | Opt-in Dry adjustment uses upper nibble `0xF0`; bit 3 and other-mode semantics unverified |
 | 27 | u8 | `timer` | Unused | Unverified | Timer |
 | 28 | u8 | `hour` | Unused | Unverified | Hour |
 | 29 | u8 | `minute` | Unused | Unverified | Minute |

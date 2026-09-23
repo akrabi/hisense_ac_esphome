@@ -7,6 +7,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
+#include "esphome/components/number/number.h"
 #include "esphome/components/uart/uart.h"
 #include "protocol.h"
 #include "transport.h"
@@ -19,6 +20,8 @@ enum Temperature_Unit {
     CELSIUS = 0,
     FAHRENHEIT = 1,
 };
+
+class HisenseACDryOffsetNumber;
 
 class HisenseAC : public PollingComponent, public climate::Climate, public uart::UARTDevice,
                   private transport::Listener {
@@ -47,6 +50,11 @@ public:
     void set_indoor_humidity_status(sensor::Sensor *sensor);
     void set_display_switch(switch_::Switch *display_switch);
     bool set_display(bool state);
+    void set_dry_offset_number(HisenseACDryOffsetNumber *number) {
+        dry_offset_number_ = number;
+        transport_.set_dry_offset_enabled(number != nullptr);
+    }
+    bool set_dry_offset(float offset);
 
     void setup() override;
     void dump_config() override;
@@ -78,6 +86,7 @@ private:
     uint32_t last_status_at_{0};
     uint32_t started_at_{0};
     bool optimistic_{false};
+    HisenseACDryOffsetNumber *dry_offset_number_{nullptr};
     PendingState pending_;
     transport::Request confirmed_{};
     float reported_current_{NAN};
@@ -114,6 +123,8 @@ private:
     void publish_presentation_();
     void update_warning_();
     void publish_diagnostics_();
+    void publish_dry_offset_();
+    bool status_stale_() const;
     void accepted_(const transport::Request &request, uint32_t generation);
     void request_update();
     void set_sensor(sensor::Sensor *sensor, float value);
@@ -125,6 +136,16 @@ public:
 
 protected:
     void write_state(bool state) override;
+    HisenseAC *parent_;
+};
+
+class HisenseACDryOffsetNumber : public number::Number {
+public:
+    explicit HisenseACDryOffsetNumber(HisenseAC *parent) : parent_(parent) { state = NAN; }
+    void publish_unknown_state();
+
+protected:
+    void control(float value) override { parent_->set_dry_offset(value); }
     HisenseAC *parent_;
 };
 

@@ -22,6 +22,7 @@ enum StatusOffset : size_t {
     PIPE_TEMPERATURE = 21,
     HUMIDITY_SETTING = 22,
     HUMIDITY = 23,
+    TEMPERATURE_COMPENSATION = 26,
     SWING = 35,
     DISPLAY = 37,
     COMPRESSOR_FREQUENCY = 41,
@@ -181,6 +182,7 @@ bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status) {
     decoded.run_status = (frame[MODE_RUN] & RUN_MASK) >> 2;
     decoded.mode_status = frame[MODE_RUN] >> 4;
     decoded.indoor_temperature_setting = frame[SETPOINT];
+    decoded.temperature_compensation_raw = frame[TEMPERATURE_COMPENSATION];
     decoded.indoor_temperature_status = frame[ROOM_TEMPERATURE];
     decoded.indoor_pipe_temperature = frame[PIPE_TEMPERATURE];
     decoded.indoor_humidity_setting = signed_byte(frame[HUMIDITY_SETTING]);

@@ -17,6 +17,8 @@ By replacing the existing Hisense module with our custom one we achieve better r
   - Temperature control
   - Presets: None, Boost (Turbo), Eco (Energy Save)
   - Optional display switch
+  - Optional [Dry adjustment number](doc/configuration/README.md#optional-dry-adjustment)
+    (-7 to +7) for units using relative adjustment in Dry mode
 
 - **Advanced Monitoring**
   - Compressor frequency monitoring

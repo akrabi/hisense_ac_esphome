@@ -1,0 +1,19 @@
+<<: !include minimal.yaml
+
+esphome:
+  name: hisense-test-dry
+
+wifi:
+  ssid: test-network
+  password: test-password
+
+api:
+
+climate:
+  - platform: hisense_ac
+    id: ac
+    name: Test AC
+    uart_id: ac_uart
+    dry_offset:
+      id: dry_adjustment
+      name: "Dry adjustment"
