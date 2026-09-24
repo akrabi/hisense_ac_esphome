@@ -10,6 +10,7 @@ Never substitute personal configurations or run `upload`/`run` for these tests.
 | `full.yaml` | ESP32 Arduino, Fahrenheit, optimism, all sensors/diagnostics |
 | `idf.yaml` | Full configuration on ESP-IDF without Arduino |
 | `two_instances.yaml` | Independent UARTs/components with both unit settings |
+| `dry_offset.yaml` | Opt-in -7..7 device-reported Dry adjustment number |
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -21,6 +22,7 @@ Never substitute personal configurations or run `upload`/`run` for these tests.
 .venv\Scripts\python.exe -m esphome compile tests\full.yaml
 .venv\Scripts\python.exe -m esphome compile tests\idf.yaml
 .venv\Scripts\python.exe -m esphome compile tests\two_instances.yaml
+.venv\Scripts\python.exe -m esphome compile tests\dry_offset.yaml
 ```
 
 Select an installed native compiler using CMake's standard generator/toolchain
@@ -70,6 +72,15 @@ publish status and that request normalization, confirmation and expiry appear
 in DEBUG traces without changing command bytes or state behavior. Operation
 traces omit absent controls while retaining explicitly requested zero/off
 values, including combined calls and display requests.
+Dry number tests verify exact command bytes and checksums for all 15 offsets,
+default-disabled/invalid-call rejection, fresh Dry-mode prerequisites,
+readback-only confirmation, class-0x65 rejection, unknown startup/non-Dry/stale
+states, remote feedback, no optimistic number state, signed confirmation,
+all 225 baseline/desired combinations, direct nonzero transitions, queue
+coalescing, instance isolation and no setter retries after timeout/expiry.
+Absolute-temperature gating is checked at both climate acceptance and fresh
+transport status, without changing behavior for configurations without the number.
+Synthetic cases are not hardware validation.
 
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
@@ -133,6 +144,19 @@ Other frame classes, status variants, unused wire flags, and acknowledgment
 correlation require separate evidence. The stubs do not emulate the physical
 UART driver or Home Assistant. Firmware compilation verifies the actual ESPHome
 API surface; it is not a hardware test or a measured callback-latency guarantee.
+
+## Dry adjustment captures
+
+Dry readback fixtures are packet-only **decoded** frames from maintainer
+attachments on 2026-09-23 (unit model unspecified, ESPHome 2026.8.2). They are
+not public issue attachments. Tests reapply wire stuffing before feeding the
+component; `dry_minus_1.hex` contains a payload `F4` byte.
+
+| Fixture | Source attachment | RX timestamp | Offset | Raw target | Checksum |
+| --- | --- | --- | --- | --- | --- |
+| `dry_minus_1.hex` | `pasted-text-a4da7110-4a78-44e0-a7f9-80ff45f15360.txt` | 11:41:27.792 | -1 | 28 | `0703` |
+| `dry_minus_4.hex` | `pasted-text-b51e80ea-4dff-4e81-b845-afa063d7f439.txt` | 12:18:42.687 | -4 | 23 | `0776` |
+| `dry_plus_7.hex` | `pasted-text-25ba35ea-f510-4638-a5e4-94d8b773acc6.txt` | 12:15:01.175 | +7 | 34 | `06E9` |
 
 ## Control-response captures
 

@@ -69,6 +69,7 @@ An 82-byte status response has length byte `49`, class `66`, data at offsets
 | 20 | Room temperature, unsigned |
 | 21 | Indoor pipe temperature, unsigned |
 | 22-23 | Humidity setting / reading, signed 8-bit |
+| 26 | Raw compensation byte; upper nibble decoded only for opt-in Dry adjustment |
 | 35 | Horizontal swing: `0x40`; vertical swing: `0x80` |
 | 37 | Display backlight: `0x80` |
 | 41-43 | Compressor frequency / setting / sent frequency, unsigned |
@@ -106,17 +107,23 @@ bits 4-6 are magnitude 0-7. Positive values 1-7 use upper nibbles `1`-`7`;
 negative values use `9`-`F`; neutral uses `0`. Upper nibble `8` is unverified.
 The lower nibble's meaning is unknown.
 
-Byte 19 is not the adjustment. The signed interpretation applies only to Dry,
-and the adjustment's physical units and baseline are unknown. Ordinary
-temperature commands do not reliably set it. This component does not yet decode
-or write the Dry adjustment.
+Byte 19 is not the adjustment. Its derived target can exceed ordinary setpoint
+limits; neither a fixed baseline nor a universal target formula is established.
+The signed interpretation applies only to Dry, and the adjustment's physical
+units are unknown. Ordinary temperature commands do not reliably set it.
+
+The optional `dry_offset` number exposes -7 through +7 in whole, unitless steps.
+It reports device feedback and becomes unknown outside active Dry mode, on
+communication loss, or for upper nibble `8`. When configured, the climate target
+is unknown in Dry and absolute-temperature requests in Dry are rejected.
+Other modes and configurations without `dry_offset` retain ordinary controls.
 
 ## Unused status fields
 
 The following names and masks preserve the historical packed `Device_Status`
-layout from commit `e65774a`. They are **not implemented capabilities**. Except
-for the Dry upper nibble described above, their meanings, units and polarity are
-unverified. A fault-like name does not establish an active fault indication.
+layout from commit `e65774a`. They are **not implemented capabilities**.
+The supported Dry upper nibble is excluded below; remaining meanings, units and
+polarity are unverified. A fault-like name does not establish an active fault indication.
 Masks refer to bits before shifting; unqualified entries occupy a whole byte.
 Never cast a frame to a C++ bitfield struct: allocation order and padding are
 implementation-dependent.
@@ -127,7 +134,7 @@ implementation-dependent.
 | 18 | `direction_status` (`03`) |
 | 24 | `somatosensory_temperature` |
 | 25 | `somatosensory_compensation_ctrl` (`07`), `somatosensory_compensation` (`F8`) |
-| 26 | `temperature_Fahrenheit` (`07`), `temperature_compensation` (`F8`; includes unexplained bit 3) |
+| 26 | `temperature_Fahrenheit` (`07`), unexplained bit 3 (`08`; part of historical `temperature_compensation` mask `F8`) |
 | 27-33 | `timer`, `hour`, `minute`, `poweron_hour`, `poweron_minute`, `poweroff_hour`, `poweroff_minute` |
 | 34 | `wind_door` (`0F`), `drying` (`F0`; no established link to Dry adjustment) |
 | 35 | `dual_frequency` (`01`), `efficient` (`02`), `low_electricity` (`04`), `low_power` (`08`), `heat` (`10`), `nature` (`20`) |
@@ -161,6 +168,46 @@ encoding, not the AC's display unit. Requests are rounded to whole device-unit
 degrees; invalid or out-of-range values are rejected. Auxiliary temperature
 readings are not assumed to change units with the setpoint.
 
+### Dry adjustment commands
+
+Offset-only commands use the same 50-byte class-`0x65` envelope. Command byte 18
+is `00` (no mode update). Byte 23 contains the sign-and-magnitude adjustment
+in its upper nibble, OR `0C` (update `08` and manual `04` flags); all other
+control payload bytes are zero.
+
+| Adjustment | Command byte 23 | Checksum | Status byte 26 | Verification |
+| --- | --- | --- | --- | --- |
+| -7 | `FC` | `02 CB` | `F1` | Confirmed |
+| -6 | `EC` | `02 BB` | `E1` | Confirmed |
+| -5 | `DC` | `02 AB` | `D1` | Confirmed |
+| -4 | `CC` | `02 9B` | `C1` | Confirmed |
+| -3 | `BC` | `02 8B` | `B1` | Confirmed |
+| -2 | `AC` | `02 7B` | `A1` | Confirmed |
+| -1 | `9C` | `02 6B` | `91` | Confirmed |
+| Neutral | `0C` | `01 DB` | `01` | Confirmed |
+| +1 | `1C` | `01 EB` | `11` | Confirmed |
+| +2 | `2C` | `01 FB` | `21` | Confirmed |
+| +3 | `3C` | `02 0B` | `31` | Confirmed |
+| +4 | `4C` | `02 1B` | `41` | Confirmed |
+| +5 | `5C` | `02 2B` | `51` | Confirmed |
+| +6 | `6C` | `02 3B` | `61` | Confirmed |
+| +7 | `7C` | `02 4B` | `71` | Confirmed |
+
+Confirmation is scoped to Tornado TOP-INV-120A (WIFI) with AEH-W4F1:
+neutral-to-offset writes, restoration to neutral, and direct transitions
++2 to +3, +3 to +4, +4 to +1, +1 to -1 and
+-1 to -2. These offset-only writes preserved raw fan `01` and mode/run `38`.
+The necessity of each flag individually, writes outside active Dry mode, and
+cross-model support remain unverified.
+
+The component requires fresh active-Dry status before writing, coalesces
+consecutive unsent adjustment requests, and confirms only from matching
+class-`0x66` polls. It does not insert an intermediate neutral write or restore
+an offset on boot. The mode-plus-offset variant (`70` at command byte 18)
+also changed fan feedback from Auto `01` to Low `0A`; it is not used.
+
+### Other controls and transaction limits
+
 Swing commands toggle individual axes. The component reads the current state
 and confirms each toggle before sending the next. Preset feedback is unverified;
 sending preset bytes does not imply a confirmed preset.
@@ -190,5 +237,6 @@ unique command correlation.
 - [Configuration and diagnostics](configuration/README.md)
 - [Regression tests and capture provenance](../tests/README.md)
 - [External protocol implementation, pinned revision 96f355b](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c):
-  corroborates set/query classes `101`/`102` and Auto feedback `1`; other mappings
-  must not be assumed to match this component or every model.
+  corroborates set/query classes `101`/`102`, Auto feedback `1`, and KTWDBC
+  adjustment fields; other mappings must not be assumed to match this component
+  or every model.

@@ -4,9 +4,11 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.core import CORE, ID
-from esphome.components import binary_sensor, climate, uart, sensor, switch
+from esphome.components import binary_sensor, climate, uart, sensor, switch, number
 from esphome.const import (
     CONF_ID,
+    CONF_DEVICE_CLASS,
+    CONF_UNIT_OF_MEASUREMENT,
     CONF_VISUAL,
     CONF_MIN_TEMPERATURE,
     CONF_MAX_TEMPERATURE,
@@ -30,11 +32,12 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ['uart']
-AUTO_LOAD = ['sensor', 'switch', 'binary_sensor']
+AUTO_LOAD = ['sensor', 'switch', 'binary_sensor', 'number']
 
 hisense_ac_ns = cg.esphome_ns.namespace('hisense_ac')
 HisenseAC = hisense_ac_ns.class_('HisenseAC', climate.Climate, cg.PollingComponent, uart.UARTDevice)
 HisenseACDisplaySwitch = hisense_ac_ns.class_('HisenseACDisplaySwitch', switch.Switch)
+HisenseACDryOffsetNumber = hisense_ac_ns.class_('HisenseACDryOffsetNumber', number.Number)
 
 CONF_TEMP_UNIT = 'temperature_unit'
 TempUnit = hisense_ac_ns.enum('Temperature_Unit')
@@ -56,6 +59,7 @@ CONF_INDOOR_HUMIDITY_SETTING = 'indoor_humidity_setting'
 CONF_INDOOR_HUMIDITY_STATUS = 'indoor_humidity_status'
 CONF_DISPLAY = 'display'
 CONF_OPTIMISTIC = 'optimistic'
+CONF_DRY_OFFSET = 'dry_offset'
 CONF_COMMUNICATION_CONNECTED = 'communication_connected'
 CONF_LAST_STATUS_AGE = 'last_status_age'
 CONF_INVALID_FRAME_COUNT = 'invalid_frame_count'
@@ -112,10 +116,25 @@ def validate_visual(config):
     return config
 
 
+def validate_dry_offset(config):
+    if CONF_DRY_OFFSET in config:
+        if config[CONF_TEMP_UNIT] != "CELSIUS":
+            raise cv.Invalid("dry_offset requires temperature_unit: CELSIUS")
+        if "DRY" not in config.get(CONF_SUPPORTED_MODES, SUPPORTED_MODES):
+            raise cv.Invalid("dry_offset requires DRY in supported_modes")
+    return config
+
+
 CONFIG_SCHEMA = cv.All(climate.climate_schema(HisenseAC).extend({
     cv.GenerateID(): cv.declare_id(HisenseAC),
     cv.Optional(CONF_TEMP_UNIT, default='CELSIUS'): cv.enum(TEMP_UNITS, upper=True),
     cv.Optional(CONF_OPTIMISTIC, default=False): cv.boolean,
+    cv.Optional(CONF_DRY_OFFSET): number.number_schema(
+        HisenseACDryOffsetNumber, icon="mdi:water-percent",
+    ).extend({
+        cv.Optional(CONF_UNIT_OF_MEASUREMENT): cv.one_of(""),
+        cv.Optional(CONF_DEVICE_CLASS): cv.one_of(""),
+    }),
     cv.Optional(CONF_SUPPORTED_MODES): cv.All(cv.ensure_list(cv.enum(SUPPORTED_MODES, upper=True)), validate_modes),
     cv.Optional(CONF_SUPPORTED_SWING_MODES): cv.ensure_list(cv.enum(SUPPORTED_SWING_MODES, upper=True)),
     cv.Optional(CONF_SUPPORTED_PRESETS): cv.ensure_list(cv.enum(SUPPORTED_PRESETS, upper=True)),
@@ -141,7 +160,7 @@ CONFIG_SCHEMA = cv.All(climate.climate_schema(HisenseAC).extend({
     cv.Optional(CONF_INDOOR_HUMIDITY_SETTING): HUMIDITY_SENSOR_SCHEMA,
     cv.Optional(CONF_INDOOR_HUMIDITY_STATUS): HUMIDITY_SENSOR_SCHEMA,
     cv.Optional(CONF_DISPLAY): switch.switch_schema(HisenseACDisplaySwitch),
-}).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA), validate_visual)
+}).extend(cv.polling_component_schema('5s')).extend(uart.UART_DEVICE_SCHEMA), validate_visual, validate_dry_offset)
 
 
 def validate_exclusive_uart(config):
@@ -197,6 +216,11 @@ async def to_code(config):
     # Initialize temperature unit
     cg.add(var.set_temperature_unit(config[CONF_TEMP_UNIT]))
     cg.add(var.set_optimistic(config[CONF_OPTIMISTIC]))
+    if CONF_DRY_OFFSET in config:
+        conf = config[CONF_DRY_OFFSET]
+        dry_offset = cg.new_Pvariable(conf[CONF_ID], var)
+        await number.register_number(dry_offset, conf, min_value=-7, max_value=7, step=1)
+        cg.add(var.set_dry_offset_number(dry_offset))
     for key in (CONF_SUPPORTED_MODES, CONF_SUPPORTED_SWING_MODES, CONF_SUPPORTED_PRESETS):
         if key in config:
             cg.add(getattr(var, f"set_{key}")(config[key]))

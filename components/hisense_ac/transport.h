@@ -8,7 +8,7 @@ namespace esphome {
 namespace hisense_ac {
 namespace transport {
 
-enum Field : uint8_t { MODE = 1, TEMPERATURE = 2, FAN = 4, SWING = 8, PRESET = 16, FIELD_DISPLAY = 32, POWER = 64 };
+enum Field : uint8_t { MODE = 1, TEMPERATURE = 2, FAN = 4, SWING = 8, PRESET = 16, FIELD_DISPLAY = 32, POWER = 64, DRY_OFFSET = 128 };
 constexpr uint8_t MODE_OFF = 4;
 constexpr size_t QUEUE_CAPACITY = 8;
 constexpr size_t MAX_PACKET_SIZE = MAX_COMMAND_WIRE_SIZE;
@@ -24,6 +24,7 @@ struct Request {
     uint8_t preset{0};
     bool display{false};
     bool fahrenheit{false};
+    int8_t dry_offset{0};  // -7..7, not an absolute temperature.
 };
 
 enum class Result { CONFIRMED, UNVERIFIED, TIMEOUT, EXPIRED, CANCELLED, SUPERSEDED, UNSUPPORTED, PREREQUISITE, WRITE_FAILED };
@@ -41,6 +42,7 @@ public:
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
     bool enqueue(const Request &request, uint32_t now, uint32_t &generation);
+    void set_dry_offset_enabled(bool enabled) { dry_offset_enabled_ = enabled; }
     void request_poll();
     void tick(uint32_t now);
     void receive(const DeviceStatus &status, uint32_t now);
@@ -61,13 +63,14 @@ private:
     size_t count_{0};
     Operation current_{};
     Step steps_[MAX_STEPS]{};
-    // One temperature step per logical operation. Never rebuild this packet
+    // One dynamic command per logical operation. Never rebuild this packet
     // while that operation is in flight; queued intents contain values only.
     CommandPacket temperature_packet_{};
     size_t step_count_{0};
     size_t step_{0};
     DeviceStatus status_{};
     bool active_{false};
+    bool dry_offset_enabled_{false};
     bool poll_requested_{false};
     bool baseline_poll_{false};
     bool unverified_{false};

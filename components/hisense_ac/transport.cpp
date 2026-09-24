@@ -33,13 +33,20 @@ bool Engine::matches(const DeviceStatus &s, const Request &r) {
     if ((r.fields & FAN) && normalize_fan_status(s.wind_status) != r.fan) return false;
     if ((r.fields & SWING) && swing(s) != r.swing) return false;
     if ((r.fields & FIELD_DISPLAY) && s.back_led != r.display) return false;
+    if ((r.fields & DRY_OFFSET) &&
+        (s.run_status == 0 || s.mode_status != 3 ||
+         (s.temperature_compensation_raw >> 4) != dry_offset_nibble(r.dry_offset)))
+        return false;
     return (r.fields & PRESET) == 0;  // No verified feedback mapping.
 }
 
 bool Engine::enqueue(const Request &request, uint32_t now, uint32_t &generation) {
     auto normalized = request;
     uint8_t encoded_temperature;
-    if (request.fields == 0 || (request.fields & ~(MODE|TEMPERATURE|FAN|SWING|PRESET|FIELD_DISPLAY)) ||
+    if (request.fields == 0 || (request.fields & ~(MODE|TEMPERATURE|FAN|SWING|PRESET|FIELD_DISPLAY|DRY_OFFSET)) ||
+        ((request.fields & DRY_OFFSET) &&
+         (!dry_offset_enabled_ || request.fields != DRY_OFFSET ||
+          request.dry_offset < -7 || request.dry_offset > 7 || request.fahrenheit)) ||
         ((request.fields & MODE) && request.mode > MODE_OFF) ||
         ((request.fields & SWING) && request.swing > 3) ||
         ((request.fields & PRESET) && request.preset > 2) ||
@@ -48,7 +55,8 @@ bool Engine::enqueue(const Request &request, uint32_t now, uint32_t &generation)
         ((request.fields & TEMPERATURE) && !temperature::normalize(
             request.temperature, request.fahrenheit, normalized.temperature, encoded_temperature)))
         return false;
-    const bool absolute = request.fields == TEMPERATURE || request.fields == FAN || request.fields == FIELD_DISPLAY;
+    const bool absolute = request.fields == TEMPERATURE || request.fields == FAN ||
+                          request.fields == FIELD_DISPLAY || request.fields == DRY_OFFSET;
     const bool replace = count_ != 0 && absolute && queue_[count_ - 1].request.fields == request.fields;
     if (!replace && count_ == QUEUE_CAPACITY) return false;
     if (++next_generation_ == 0) ++next_generation_;
@@ -203,6 +211,11 @@ void Engine::tick(uint32_t now) {
             break;
         case Phase::CONTROL_READY:
             if (tx_started_ && !due_(now, tx_until_)) return;
+            if (dry_offset_enabled_ && (steps_[step_].expected.fields & TEMPERATURE) &&
+                status_.mode_status == 3) {
+                finish_(Result::PREREQUISITE, now);
+                return;
+            }
             if (!matches(status_, steps_[step_].guard)) { finish_(Result::PREREQUISITE, now); return; }
             if (!send_(steps_[step_].data, steps_[step_].size, now)) {
                 finish_(Result::WRITE_FAILED, now); return;
@@ -247,9 +260,42 @@ void Engine::receive(const DeviceStatus &status, uint32_t now) {
     if (static_cast<uint32_t>(now - current_.queued_at) >= OPERATION_TIMEOUT_MS) return;
     if (baseline_poll_) {
         confirmation_polls_ = 0;
+        const auto &request = current_.request;
+        if (dry_offset_enabled_ && (request.fields & TEMPERATURE) &&
+            ((request.fields & MODE) ? request.mode == 3 : status.mode_status == 3)) {
+            finish_(Result::PREREQUISITE, now);
+            return;
+        }
+        if (current_.request.fields == DRY_OFFSET) {
+            const auto &r = current_.request;
+            // Require fresh active Dry status; this command must never change mode or power.
+            const uint8_t nibble = status.temperature_compensation_raw >> 4;
+            if (!dry_offset_enabled_ || status.run_status == 0 || status.mode_status != 3 || nibble == 0x08) {
+                finish_(Result::PREREQUISITE, now);
+                return;
+            }
+            step_ = step_count_ = 0;
+            unverified_ = false;
+            if (matches(status, r)) {
+                finish_(Result::CONFIRMED, now);  // Already matches; no setter needed.
+                return;
+            }
+            auto guard = r;
+            guard.dry_offset = nibble & 0x08 ? -static_cast<int8_t>(nibble & 0x07) : static_cast<int8_t>(nibble);
+            if (!encode_dry_offset(r.dry_offset, temperature_packet_) ||
+                !add_step_(temperature_packet_.data, temperature_packet_.size, r, guard)) {
+                finish_(Result::UNSUPPORTED, now);
+                return;
+            }
+            phase_ = Phase::CONTROL_READY;
+            return;
+        }
         if (!build_steps_()) { finish_(Result::UNSUPPORTED, now); return; }
         if (step_count_ == 0) { finish_(Result::CONFIRMED, now); return; }
         phase_ = Phase::CONTROL_READY;
+    } else if (current_.request.fields == DRY_OFFSET &&
+               (status.run_status == 0 || status.mode_status != 3)) {
+        finish_(Result::PREREQUISITE, now);
     } else if (matches(status, steps_[step_].expected)) {
         if (step_ + 1 == step_count_) {
             auto final = current_.request;

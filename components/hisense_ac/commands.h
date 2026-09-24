@@ -24,6 +24,14 @@ bool encode_command(const uint8_t *body, size_t body_size, uint8_t *output,
 // Preserves the original C16..32/F61..90 packets without switching device units.
 bool encode_temperature(int device_temperature, bool fahrenheit, CommandPacket &packet);
 
+// Sign-and-magnitude for the verified Dry readback range (-7..7).
+inline uint8_t dry_offset_nibble(int8_t offset) {
+    return offset < 0 ? static_cast<uint8_t>(0x08 | -offset) : static_cast<uint8_t>(offset);
+}
+
+// Offset-only KTWDBC command, restricted to -7..7.
+bool encode_dry_offset(int offset, CommandPacket &packet);
+
 // Opaque original packets remain immutable, including unused command variants.
 extern const uint8_t on[CMD_SIZE];
 extern const uint8_t off[CMD_SIZE];
