@@ -1,60 +1,83 @@
-# Hisense Air Conditioner Component for ESPHome
+# ESPHome AC Control - Hisense Wi-Fi Module Replacement
 
-This project is a replacement hardware and a matching ESPHome external component for  Hisense Air Conditioners Wifi Module. While these Wifi modules allow control over the AC (even local only) with [integration to HA](https://github.com/deiger/AirCon), the module itself is highly unreliable.
-By replacing the existing Hisense module with our custom one we achieve better reliabilty, faster response time and additional information about the AC unit.
+[![Component tests](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml/badge.svg)](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/akrabi/hisense_ac_esphome)](https://github.com/akrabi/hisense_ac_esphome/releases/latest)
 
-> **Compatibility:** Designed for AC units using compatible Hisense WiFi modules,
-> including confirmed setups with AEH-W4F1, AEH-W4E1, AEH-W4B1, and AEH-W4G2. Check the
-> [tested models](doc/hardware/COMPATIBLE_DEVICES.md) before buying hardware;
-> the module model alone does not guarantee compatibility.
+**Control any air conditioner that uses a compatible Hisense Wi-Fi module locally
+in Home Assistant, regardless of brand.** Replace the original module with a DIY
+ESP32 and RS-485 adapter running this ESPHome external component, without the
+vendor cloud. Confirmed setups include **Hisense, Tornado and ACOND** air conditioners.
 
-## Features
+<img src="doc/img/home-assistant-climate.png" alt="Home Assistant climate controls for an Office air conditioner, showing current and target temperatures, Cool mode, Auto fan and horizontal swing" width="360">
 
-- **Basic Climate Control**
-  - Operating modes: Heat, Cool, Fan Only, Dry
-  - Fan speeds: Auto, Low, Medium, High, Quiet
-  - Swing modes: Off, Vertical, Horizontal, Both
-  - Temperature control
-  - Presets: None, Boost (Turbo), Eco (Energy Save)
-  - Optional display switch
-  - Optional [Dry adjustment number](doc/configuration/README.md#optional-dry-adjustment)
-    (-7 to +7) for units using relative adjustment in Dry mode
+*A real Home Assistant setup using this component. Available controls depend on the AC model.*
 
-- **Advanced Monitoring**
-  - Compressor frequency monitoring
-  - Multiple temperature sensors
-  - Indoor humidity monitoring
-  - System status tracking
-  - Optional communication health, status age and error counters
+- **See what the AC actually did:** state comes from the unit by default, rather
+  than assuming a command succeeded. Physical-remote changes are reflected too.
+- **Control and monitor in one place:** Heat, Cool, Dry and Fan modes, fan and
+  swing controls, plus optional display control, compressor frequency,
+  temperature and humidity sensors.
+- **Troubleshoot with useful feedback:** optional connection health, status age
+  and error counters, plus detailed protocol logs.
 
-## Hardware
+For presets, model-specific [Dry adjustment](doc/configuration/README.md#optional-dry-adjustment)
+and feature limitations, see the [configuration guide](doc/configuration/README.md).
 
-### Requirements
-A compatible AC unit with a Hisense Wifi Module (see [compatible devices](doc/hardware/COMPATIBLE_DEVICES.md) for tested models)
+[Quick start](#quick-start) | [Compatibility](#compatible-air-conditioners) |
+[Wiring guide](doc/hardware/README.md) | [All configuration options](doc/configuration/README.md)
 
-### Setup
-Hardware modifications are at your own risk. Read the [disclaimer](#disclaimer) before starting.
+## Compatible air conditioners
 
-See the [hardware](doc/hardware/README.md) documentation for further details.
+These setups have been reported working with **this component**:
 
-## Configuration
+| AC model | Original Wi-Fi module |
+| --- | --- |
+| Tornado TOP-INV-120A (WIFI) | AEH-W4F1 |
+| Tornado MULTI-12A (WIFI) (AST-09UW4RVETV00D, 2020) | AEH-W4G2 |
+| Hisense AST-12UW4RVETG00A | AEH-W4E1 |
+| ACOND ASTI-09UW4RVEDC00 | AEH-W4B1 |
 
-For a complete example configuration including ESP32 setup, WiFi configuration, and all available options, see [configuration](doc/configuration/README.md).
+See the [full compatibility notes](doc/hardware/COMPATIBLE_DEVICES.md) for the
+TOP-INV-140A/180A variants and how to report a new setup.
 
-Communication uses a dedicated ESP32 hardware UART with a bounded asynchronous
-command queue. State is reported by the AC by default; `optimistic: true` enables
-immediate control feedback with subsequent reconciliation. See the
-[migration notes](doc/configuration/README.md#state-reporting-and-migration).
+> **Broader compatibility:** Additional Hisense, Ballu and Newtek models are
+> [expected to be compatible](doc/hardware/COMPATIBLE_DEVICES.md#expected-compatible-models)
+> based on public protocol information. Confirmation with this component is still
+> pending, and optional features may vary by model.
+
+## Quick start
+
+You need an ESP32, an RS-485/UART adapter with **automatic direction switching**,
+and the appropriate connector. Adapters requiring DE/RE control are not supported.
+
+**Disconnect AC power at the circuit breaker before opening the unit.** Check
+pinout, supply voltage and logic levels using the
+[hardware and wiring guide](doc/hardware/README.md). Hardware modifications are
+[at your own risk](#disclaimer).
+
+1. Check your model and complete the [hardware setup](doc/hardware/README.md).
+2. Create an ESP32 device in ESPHome Device Builder using the board you have.
+   Keep its generated `esphome`, `esp32`, Wi-Fi, encrypted API and OTA settings.
+3. Add the configuration below. Merge `logger` settings into your existing
+   section rather than creating a second one. GPIO16/17 match the wiring example;
+   use the pins you actually connected and a dedicated UART for each AC.
+4. Install the firmware and add the ESPHome device to Home Assistant. The climate
+   entity will report state after receiving a valid status from the AC.
 
 ```yaml
+logger:
+  baud_rate: 0
+
 external_components:
   - source: github://akrabi/hisense_ac_esphome
     components: [hisense_ac]
+
 uart:
   id: uart_bus
   tx_pin: GPIO17
   rx_pin: GPIO16
   baud_rate: 9600
+
 climate:
   - platform: hisense_ac
     name: "Air Conditioner"
@@ -64,18 +87,27 @@ climate:
       name: "Display"
 ```
 
-## Contributing
+Remove `display` if your unit does not support it. For optional sensors,
+diagnostics and multi-room examples, see the
+[configuration guide](doc/configuration/README.md).
 
-Feel free to submit issues and pull requests on GitHub.
+By default, Home Assistant shows device-reported state. For immediate control
+feedback followed by reconciliation, see
+[`optimistic` and migration notes](doc/configuration/README.md#state-reporting-and-migration).
 
-See [regression tests](tests/README.md) for credential-free ESP32 Arduino/ESP-IDF
-builds and native tests, and the [UART protocol reference](doc/protocol.md) for supported
-response layouts and remaining model-specific verification gaps.
+## Documentation and support
 
-The development dependency baseline is ESPHome 2026.8.2. CI covers both ESP32
-framework configurations and two independent AC instances. Hardware timing,
-additional model capabilities, and named fault/preset feedback still require
-device-specific evidence.
+- [Configuration and examples](doc/configuration/README.md): sensors, diagnostics,
+  optional controls and migration notes.
+- [Protocol reference](doc/protocol.md) and [regression tests](tests/README.md):
+  development details and ESP32 Arduino/ESP-IDF coverage. Software checks do not
+  establish hardware compatibility.
+- [Releases](https://github.com/akrabi/hisense_ac_esphome/releases) |
+  [Issues](https://github.com/akrabi/hisense_ac_esphome/issues) |
+  [Report a working model](doc/hardware/COMPATIBLE_DEVICES.md#adding-your-device).
+
+Contributions are welcome. Remove passwords, API keys and other secrets from
+logs and configurations before sharing.
 
 ## Acknowledgments
 

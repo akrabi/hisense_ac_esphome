@@ -1,10 +1,14 @@
 # Configuration
 
-For a full working example configuration see the configuration folder.
+For a short setup walkthrough, start with the [quick start](../../README.md#quick-start).
+For full multi-room configurations, see the [examples](examples).
 
-The checked-in examples use a local component path relative to
-`doc/configuration/examples`. When copying them elsewhere, adjust that path or
-use the GitHub source below.
+The examples download the component from GitHub, so they do not require a local
+checkout. Copy `ac-common.yaml`, a room YAML and `secrets.yaml` into your ESPHome
+configuration directory. Replace the example secrets, generate your own API
+encryption key, and adjust the board, UART pins and network settings before use.
+For local component development, replace the GitHub source with a `type: local`
+source pointing to your checkout's `components` directory.
 
 ## Installation
 
