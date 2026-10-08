@@ -1,4 +1,4 @@
-# ESPHome AC Control - Hisense Wi-Fi Module Replacement
+# ❄️ ESPHome AC Control - Hisense Wi-Fi Module Replacement
 
 [![Component tests](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml/badge.svg)](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/akrabi/hisense_ac_esphome)](https://github.com/akrabi/hisense_ac_esphome/releases/latest)
@@ -26,7 +26,9 @@ and feature limitations, see the [configuration guide](doc/configuration/README.
 [Quick start](#quick-start) | [Compatibility](#compatible-air-conditioners) |
 [Wiring guide](doc/hardware/README.md) | [All configuration options](doc/configuration/README.md)
 
-## Compatible air conditioners
+<a id="compatible-air-conditioners"></a>
+
+## ✅ Compatible air conditioners
 
 These setups have been reported working with **this component**:
 
@@ -45,12 +47,14 @@ TOP-INV-140A/180A variants and how to report a new setup.
 > based on public protocol information. Confirmation with this component is still
 > pending, and optional features may vary by model.
 
-## Quick start
+<a id="quick-start"></a>
+
+## 🚀 Quick start
 
 You need an ESP32, an RS-485/UART adapter with **automatic direction switching**,
 and the appropriate connector. Adapters requiring DE/RE control are not supported.
 
-**Disconnect AC power at the circuit breaker before opening the unit.** Check
+⚠️ **Disconnect AC power at the circuit breaker before opening the unit.** Check
 pinout, supply voltage and logic levels using the
 [hardware and wiring guide](doc/hardware/README.md). Hardware modifications are
 [at your own risk](#disclaimer).
@@ -95,7 +99,9 @@ By default, Home Assistant shows device-reported state. For immediate control
 feedback followed by reconciliation, see
 [`optimistic` and migration notes](doc/configuration/README.md#state-reporting-and-migration).
 
-## Documentation and support
+<a id="documentation-and-support"></a>
+
+## 📚 Documentation and support
 
 - [Configuration and examples](doc/configuration/README.md): sensors, diagnostics,
   optional controls and migration notes.
