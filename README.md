@@ -1,12 +1,12 @@
-# Hisense AC for Home Assistant with ESPHome
+# ESPHome AC Control - Hisense Wi-Fi Module Replacement
 
 [![Component tests](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml/badge.svg)](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/akrabi/hisense_ac_esphome)](https://github.com/akrabi/hisense_ac_esphome/releases/latest)
 
-**Control your compatible Hisense-made air conditioner locally in Home Assistant,
-without the vendor cloud.** This ESPHome external component works with a DIY
-ESP32 and RS-485 adapter that replaces the original Wi-Fi module. Confirmed
-setups include **Hisense, Tornado and ACOND** air conditioners.
+**Control any air conditioner that uses a compatible Hisense Wi-Fi module locally
+in Home Assistant, regardless of brand.** Replace the original module with a DIY
+ESP32 and RS-485 adapter running this ESPHome external component, without the
+vendor cloud. Confirmed setups include **Hisense, Tornado and ACOND** air conditioners.
 
 <img src="doc/img/home-assistant-climate.png" alt="Home Assistant climate controls for an Office air conditioner, showing current and target temperatures, Cool mode, Auto fan and horizontal swing" width="360">
 
