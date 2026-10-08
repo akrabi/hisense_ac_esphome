@@ -1,6 +1,9 @@
 # Compatible Devices
 
-This document lists the Hisense AC models that have been tested and confirmed to work with this ESPHome component.
+This document distinguishes models reported working with this ESPHome component
+from unverified candidates. Matching a brand, protocol family or
+Wi-Fi module does not by itself establish compatibility or support for every
+optional feature.
 
 ## Confirmed Working Models
 
@@ -14,15 +17,49 @@ This document lists the Hisense AC models that have been tested and confirmed to
 The Tornado TOP-INV-120A entry also covers the TOP-INV-140A (WIFI) and TOP-INV-180A (WIFI)
 variants, which use the same AEH-W4F1 module.
 
+## Unverified candidate models
+
+**These models are not confirmed or advertised as supported by this component.**
+They are listed to help owners identify candidates for investigation, not as a
+recommendation to buy hardware or replace a working module.
+
+These candidates are based on publicly available model and protocol information,
+not hardware validation with this component. Their original Wi-Fi module
+identifiers have not been verified here, so none is inferred.
+
+| Candidate model | Status with this component |
+| --- | --- |
+| Hisense CITY DC Inverter AS-13UW4RYRCM04G/04W | Unverified |
+| Hisense SILVER CRYSTAL SUPER DC Inverter AS-13UW4RVETG01 | Unverified |
+| Newtek NT-77HSDC12 | Unverified |
+| Ballu iGreen Pro DC BSAGI-07HN8 | Unverified |
+| Ballu iGreen Pro DC BSAGI-12HN8 | Unverified |
+| Ballu iGreen Pro DC BSAGI-18HN8_V4 | Unverified |
+| Ballu Platinum DC BSEI-09HN8_V3 | Unverified |
+| Hisense Free Match Multi Split 4AMW81U4RJC | Unverified |
+
+This list does not establish AEH-W4G1 support or endorse reflashing original
+Wi-Fi modules. UART wiring, voltage levels, response layouts and control
+encodings need model-specific verification. A valid packet or a successful
+firmware build alone is not enough to mark a model working.
+
 ## Adding Your Device
 
-If you've successfully used this component with a Hisense AC model not listed here, please consider contributing by:
+Open an [issue](https://github.com/akrabi/hisense_ac_esphome/issues/new) or submit
+a pull request with:
 
-1. Fork the repository
-2. Add your device to this list with the following information:
-   - Model number
-   - Year of manufacture (if known)
-   - Connection details (pin layout, voltage levels, etc.)
-   - Any special configuration requirements
-   - Any limitations or issues encountered
-3. Submit a pull request
+- Exact AC model, year if known, and original Wi-Fi module identifier.
+- ESP32 board, RS-485 adapter, connector pinout, supply and logic voltages.
+- ESPHome version and this component's release or commit.
+- Sanitized configuration and any special setup requirements.
+- Results for power, modes, temperature, fan and swing; optional display,
+  presets, sensors or Dry adjustment only if tested.
+- Whether Home Assistant follows physical-remote changes and recovers after
+  communication is interrupted, plus any limitations or failed controls.
+
+For an unverified candidate, start with the
+[hardware safety guidance](README.md) and provide sanitized
+[protocol logs](../configuration/README.md#debug-logging) when investigating.
+Do not share passwords, API keys or other secrets. Move a candidate to the
+confirmed list only after evidence from **this component on that model** has
+been reviewed, recording feature-specific limitations.
