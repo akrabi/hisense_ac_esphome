@@ -1,9 +1,8 @@
 # Compatible Devices
 
-This document distinguishes models reported working with this ESPHome component
-from unverified candidates. Matching a brand, protocol family or
-Wi-Fi module does not by itself establish compatibility or support for every
-optional feature.
+This document lists models confirmed working with this ESPHome component and
+additional models expected to be compatible based on public protocol information.
+Optional features can vary by model.
 
 ## Confirmed Working Models
 
@@ -17,31 +16,32 @@ optional feature.
 The Tornado TOP-INV-120A entry also covers the TOP-INV-140A (WIFI) and TOP-INV-180A (WIFI)
 variants, which use the same AEH-W4F1 module.
 
-## Unverified candidate models
+## Expected compatible models
 
-**These models are not confirmed or advertised as supported by this component.**
-They are listed to help owners identify candidates for investigation, not as a
-recommendation to buy hardware or replace a working module.
+**We expect these models to be compatible based on publicly available information
+about their use of the Hisense RS-485 protocol.** Confirmation with this component
+is still pending; they are not yet hardware-tested entries in the confirmed list.
+If you own one, your results can help confirm compatibility and any
+model-specific limitations.
 
-These candidates are based on publicly available model and protocol information,
-not hardware validation with this component. Their original Wi-Fi module
-identifiers have not been verified here, so none is inferred.
+Original Wi-Fi module identifiers have not yet been confirmed for these entries.
 
-| Candidate model | Status with this component |
+| Expected compatible model | Status with this component |
 | --- | --- |
-| Hisense CITY DC Inverter AS-13UW4RYRCM04G/04W | Unverified |
-| Hisense SILVER CRYSTAL SUPER DC Inverter AS-13UW4RVETG01 | Unverified |
-| Newtek NT-77HSDC12 | Unverified |
-| Ballu iGreen Pro DC BSAGI-07HN8 | Unverified |
-| Ballu iGreen Pro DC BSAGI-12HN8 | Unverified |
-| Ballu iGreen Pro DC BSAGI-18HN8_V4 | Unverified |
-| Ballu Platinum DC BSEI-09HN8_V3 | Unverified |
-| Hisense Free Match Multi Split 4AMW81U4RJC | Unverified |
+| Hisense CITY DC Inverter AS-13UW4RYRCM04G/04W | Awaiting confirmation |
+| Hisense SILVER CRYSTAL SUPER DC Inverter AS-13UW4RVETG01 | Awaiting confirmation |
+| Newtek NT-77HSDC12 | Awaiting confirmation |
+| Ballu iGreen Pro DC BSAGI-07HN8 | Awaiting confirmation |
+| Ballu iGreen Pro DC BSAGI-12HN8 | Awaiting confirmation |
+| Ballu iGreen Pro DC BSAGI-18HN8_V4 | Awaiting confirmation |
+| Ballu Platinum DC BSEI-09HN8_V3 | Awaiting confirmation |
+| Hisense Free Match Multi Split 4AMW81U4RJC | Awaiting confirmation |
 
-This list does not establish AEH-W4G1 support or endorse reflashing original
-Wi-Fi modules. UART wiring, voltage levels, response layouts and control
-encodings need model-specific verification. A valid packet or a successful
-firmware build alone is not enough to mark a model working.
+Before installation, check the connector pinout, supply and logic voltages
+against the [hardware guide](README.md). Shared protocol support is a promising
+starting point, but status layouts and individual controls still need checking
+on each model. This guide covers an external ESP32 adapter, not reflashing
+original Wi-Fi modules.
 
 ## Adding Your Device
 
@@ -57,9 +57,9 @@ a pull request with:
 - Whether Home Assistant follows physical-remote changes and recovers after
   communication is interrupted, plus any limitations or failed controls.
 
-For an unverified candidate, start with the
+To help confirm an additional model, start with the
 [hardware safety guidance](README.md) and provide sanitized
 [protocol logs](../configuration/README.md#debug-logging) when investigating.
-Do not share passwords, API keys or other secrets. Move a candidate to the
-confirmed list only after evidence from **this component on that model** has
-been reviewed, recording feature-specific limitations.
+Do not share passwords, API keys or other secrets. Once results from
+**this component on that model** have been reviewed, the model can move to the
+confirmed list with any feature-specific limitations recorded.

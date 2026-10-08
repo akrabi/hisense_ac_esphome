@@ -40,11 +40,10 @@ These setups have been reported working with **this component**:
 See the [full compatibility notes](doc/hardware/COMPATIBLE_DEVICES.md) for the
 TOP-INV-140A/180A variants and how to report a new setup.
 
-> **Check before buying hardware:** a matching brand or Wi-Fi module identifier
-> does not guarantee compatibility or every optional feature. Additional Hisense,
-> Ballu and Newtek models are listed separately as
-> [unverified candidates](doc/hardware/COMPATIBLE_DEVICES.md#unverified-candidate-models),
-> **not supported models for this component**.
+> **Broader compatibility:** Additional Hisense, Ballu and Newtek models are
+> [expected to be compatible](doc/hardware/COMPATIBLE_DEVICES.md#expected-compatible-models)
+> based on public protocol information. Confirmation with this component is still
+> pending, and optional features may vary by model.
 
 ## Quick start
 
