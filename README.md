@@ -8,6 +8,10 @@ without the vendor cloud.** This ESPHome external component works with a DIY
 ESP32 and RS-485 adapter that replaces the original Wi-Fi module. Confirmed
 setups include **Hisense, Tornado and ACOND** air conditioners.
 
+<img src="doc/img/home-assistant-climate.png" alt="Home Assistant climate controls for an Office air conditioner, showing current and target temperatures, Cool mode, Auto fan and horizontal swing" width="420">
+
+*A real Home Assistant setup using this component. Available controls depend on the AC model.*
+
 - **See what the AC actually did:** state comes from the unit by default, rather
   than assuming a command succeeded. Physical-remote changes are reflected too.
 - **Control and monitor in one place:** climate controls, optional display control,
