@@ -66,6 +66,8 @@ def test_upstream_status_capture_integrity():
 @pytest.mark.parametrize("name,wire_size,decoded_size,checksum", [
     ("issue_1_status_82_escaped.hex", 83, 82, 0x049B),
     ("issue_6_status_160.hex", 160, 160, 0x09BA),
+    ("issue_16_status_150.hex", 150, 150, 0x06BB),
+    ("upstream_pr_3_status_150.hex", 150, 150, 0x0768),
 ])
 def test_public_issue_capture_integrity(name, wire_size, decoded_size, checksum):
     wire = bytes.fromhex((Path(__file__).parent / "fixtures" / name).read_text())
@@ -85,6 +87,20 @@ def test_public_issue_capture_integrity(name, wire_size, decoded_size, checksum)
     assert decoded[5:16] == bytes.fromhex("01 00 fe 01 01 01 01 00 66 00 01")
     assert decoded[-2:] == bytes.fromhex("f4 fb")
     assert sum(decoded[2:-4]) == int.from_bytes(decoded[-4:-2], "big") == checksum
+
+
+@pytest.mark.parametrize("name,fan,mode,target,room,frequencies,power", [
+    ("issue_16_status_150.hex", 10, 0x38, 22, 23, [43, 40, 41], 1400),
+    ("upstream_pr_3_status_150.hex", 1, 0x28, 26, 26, [20, 30, 0], 110),
+])
+def test_extended_status_capture_fields(name, fan, mode, target, room, frequencies, power):
+    packet = bytes.fromhex((Path(__file__).parent / "fixtures" / name).read_text())
+    assert packet[16] == fan
+    assert packet[18:21] == bytes([mode, target, room])
+    assert packet[41:44] == bytes(frequencies)
+    # Packet evidence only: this does not establish sensor units or scaling.
+    assert int.from_bytes(packet[55:57], "big") == power
+    assert int.from_bytes(packet[144:146], "little") == power
 
 
 @pytest.mark.parametrize("mode,control_checksum,poll_checksum,differences", [

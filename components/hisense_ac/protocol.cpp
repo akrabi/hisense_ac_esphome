@@ -12,7 +12,9 @@ constexpr uint8_t RESPONSE = 0x01;
 constexpr uint8_t CONTROL = 0x40;
 constexpr size_t ENVELOPE_SIZE = 9;
 constexpr size_t CLASS_OFFSET = 13;
+constexpr size_t SUBTYPE_OFFSET = 14;
 constexpr uint8_t STATUS_CLASS = 0x66;
+constexpr uint8_t STATUS_SUBTYPE = 0x00;
 
 enum StatusOffset : size_t {
     WIND = 16,
@@ -173,8 +175,8 @@ size_t FrameParser::feed(uint8_t byte, uint32_t now) {
 }
 
 bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status) {
-    if (size != STATUS_FRAME_SIZE || !valid_frame(frame, size) ||
-        frame[CLASS_OFFSET] != STATUS_CLASS)
+    if (!is_status_frame_size(size) || !valid_frame(frame, size) ||
+        frame[CLASS_OFFSET] != STATUS_CLASS || frame[SUBTYPE_OFFSET] != STATUS_SUBTYPE)
         return false;
 
     DeviceStatus decoded;

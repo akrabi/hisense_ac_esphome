@@ -243,9 +243,9 @@ bool HisenseAC::get_response(uint8_t input) {
                  static_cast<unsigned>(size));
     }
     if (!protocol::decode_status(parser_.data(), size, status_)) {
-        if (size == protocol::STATUS_FRAME_SIZE && parser_.data()[13] == 0x65) {
-            ESP_LOGD(TAG, "AC=%p Control response (82 bytes, class=0x65); not used for state or command confirmation.",
-                     static_cast<const void *>(this));
+        if (protocol::is_status_frame_size(size) && parser_.data()[13] == 0x65) {
+            ESP_LOGD(TAG, "AC=%p Control response (%u bytes, class=0x65); not used for state or command confirmation.",
+                     static_cast<const void *>(this), static_cast<unsigned>(size));
         } else if (size >= 18) {
             ESP_LOGD(TAG, "AC=%p Ignoring unsupported response (%u bytes, class=0x%02X).",
                      static_cast<const void *>(this), static_cast<unsigned>(size),

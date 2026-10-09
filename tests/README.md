@@ -45,14 +45,14 @@ control/loop/publication path, not a second implementation of that behavior.
 
 Coverage includes every capture fragmentation/truncation position, concatenated
 packets, header overlap, noise, payload/checksum stuffing, high-bit data, checksum
-and footer errors, accepted lengths from 9–128 decoded bytes and rejection of
+and footer errors, accepted lengths from 9–150 decoded bytes and rejection of
 larger declared lengths through 264, inconsistent declared lengths, full capacity
 with stuffing, timeout boundaries and clock rollover, interleaved
 instances, explicit signed decoding, all mode/swing/display masks, and 100,000
 deterministic noise bytes. These replace the foundation commit's known-bug
-characterization tests. Supported 82-byte captures are tested at every wire
+characterization tests. Supported 82- and 150-byte captures are tested at every wire
 fragmentation boundary, individually and concatenated. Synthetic nonzero final
-payload bytes at lengths 82 and 128 must participate in the checksum;
+payload bytes at lengths 82 and 150 must participate in the checksum;
 checksums calculated using the original off-by-one boundary are rejected.
 The issue #6 capture is a negative regression: it must not publish status or
 advance an operation, and the parser must recover for subsequent supported data.
@@ -154,6 +154,38 @@ Other frame classes, status variants, unused wire flags, and acknowledgment
 correlation require separate evidence. The stubs do not emulate the physical
 UART driver or Home Assistant. Firmware compilation verifies the actual ESPHome
 API surface; it is not a hardware test or a measured callback-latency guarantee.
+
+## 150-byte status captures
+
+The following packet-only **decoded** frames were retrieved on 2026-10-09.
+Neither contains interior `F4` bytes, so their wire and decoded lengths are both
+150. Each has declared length `8D`, class/subtype `66/00`, checksum at 146-147
+and footer at 148-149.
+
+| Fixture | Source | Checksum |
+| --- | --- | --- |
+| `fixtures/issue_16_status_150.hex` | [Issue #16 body](https://github.com/akrabi/hisense_ac_esphome/issues/16), all five chunks starting at `19:52:16.770` | `06BB` |
+| `fixtures/upstream_pr_3_status_150.hex` | [Druidblack/AC-Hisense#3 body](https://github.com/Druidblack/AC-Hisense/pull/3), idle reference frame | `0768` |
+
+The upstream fixture expands the source's `00 × 64` notation to exactly 64 zero
+bytes. Issue #16 does not identify its unit/module; the upstream reporter names
+an AEH-W4G1 setup. These are separate sources, not proof of matching hardware.
+The issue capture reproduces Low fan, active Dry, room 23 and compressor fields
+43/40/41. Python checks independently assert lengths, checksums and selected raw
+fields, including the matching candidate power fields; no electrical sensor
+semantics are enabled by those assertions.
+
+Native tests cover every split/truncation position, mixed 82/150 streams,
+interleaved instances, extended-payload/checksum stuffing, full-tail corruption
+and recovery. Both layouts reject all nonzero status subtypes. Signed/unsigned
+decoding and all mode/swing/display masks run against both lengths. Component
+tests replay the issue capture with paced bytes, verify publication and health,
+and exercise a **synthetic** fan baseline/control/confirmation sequence in both
+optimistic and device-reported modes. Control replies, capability-like replies,
+corruption and the 160-byte fixture cannot advance confirmation or publish
+status. Tests check status age, exact poll-deadline boundaries, log reconstruction
+and switching back to the 82-byte layout. These tests do not establish hardware
+control compatibility; identified on-device acceptance is still required.
 
 ## Dry adjustment captures
 

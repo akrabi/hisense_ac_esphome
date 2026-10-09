@@ -9,6 +9,10 @@ guarantee.
 [Project overview](../../README.md) | [ESP32 wiring guide](README.md) |
 [Report a working model](#adding-your-device)
 
+Ordinary 82- and 150-byte status responses are supported automatically; 160-byte
+variants remain unsupported. See the [protocol compatibility scope](../protocol.md#150-byte-compatibility-scope)
+for capture evidence and model-specific limitations.
+
 ## Confirmed Working Models
 
 | AC Model | WiFi Module |
