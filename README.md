@@ -155,8 +155,9 @@ For missing or stale updates, start with
 Contributions are welcome. Remove passwords, API keys and other secrets from
 logs and configurations before sharing.
 
-If this component helps you, star the repository to bookmark it, watch releases
-for updates, or contribute a compatibility report or pull request.
+If this component helps you, [open the repository](https://github.com/akrabi/hisense_ac_esphome)
+and click **⭐ Star** to bookmark it, use **Watch → Custom → Releases** for release
+notifications, or contribute a compatibility report or pull request.
 
 <a id="acknowledgments"></a>
 
