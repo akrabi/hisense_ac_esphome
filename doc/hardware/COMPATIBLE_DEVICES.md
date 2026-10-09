@@ -1,8 +1,13 @@
-# Compatible Devices
+# Hisense ESPHome Compatibility: Air Conditioners and Wi-Fi Modules
 
-This document lists models confirmed working with this ESPHome component and
+This document lists Hisense, Tornado and ACOND air conditioners confirmed working
+with the `hisense_ac` ESPHome component for local Home Assistant control, plus
 additional models expected to be compatible based on public protocol information.
-Optional features can vary by model.
+Optional features can vary by model; a shared brand name is not a compatibility
+guarantee.
+
+[Project overview](../../README.md) | [ESP32 wiring guide](README.md) |
+[Report a working model](#adding-your-device)
 
 ## Confirmed Working Models
 

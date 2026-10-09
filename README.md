@@ -3,10 +3,11 @@
 [![Component tests](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml/badge.svg)](https://github.com/akrabi/hisense_ac_esphome/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/akrabi/hisense_ac_esphome)](https://github.com/akrabi/hisense_ac_esphome/releases/latest)
 
-**Control any air conditioner that uses a compatible Hisense Wi-Fi module locally
-in Home Assistant, regardless of brand.** Replace the original module with a DIY
-ESP32 and RS-485 adapter running this ESPHome external component, without the
-vendor cloud. Confirmed setups include **Hisense, Tornado and ACOND** air conditioners.
+**An ESPHome external component for local Home Assistant control of air
+conditioners with compatible Hisense Wi-Fi modules.** Replace the original module
+with a DIY ESP32 and RS-485 adapter to control your AC without the vendor cloud.
+Confirmed setups include **Hisense, Tornado and ACOND** air conditioners; support
+depends on the model and protocol, not the brand alone.
 
 <img src="doc/img/home-assistant-climate.png" alt="Home Assistant climate controls for an Office air conditioner, showing current and target temperatures, Cool mode, Auto fan and horizontal swing" width="360">
 
@@ -24,7 +25,8 @@ For presets, model-specific [Dry adjustment](doc/configuration/README.md#optiona
 and feature limitations, see the [configuration guide](doc/configuration/README.md).
 
 [Quick start](#quick-start) | [Compatibility](#compatible-air-conditioners) |
-[Wiring guide](doc/hardware/README.md) | [All configuration options](doc/configuration/README.md)
+[Wiring guide](doc/hardware/README.md) | [All configuration options](doc/configuration/README.md) |
+[FAQ](#frequently-asked-questions) | [Support](#documentation-and-support)
 
 <a id="compatible-air-conditioners"></a>
 
@@ -60,13 +62,15 @@ pinout, supply voltage and logic levels using the
 [at your own risk](#disclaimer).
 
 1. Check your model and complete the [hardware setup](doc/hardware/README.md).
-2. Create an ESP32 device in ESPHome Device Builder using the board you have.
+2. Create an ESP32 device in [ESPHome Device Builder](https://esphome.io/install/getting-started/)
+   using the board you have.
    Keep its generated `esphome`, `esp32`, Wi-Fi, encrypted API and OTA settings.
 3. Add the configuration below. Merge `logger` settings into your existing
    section rather than creating a second one. GPIO16/17 match the wiring example;
    use the pins you actually connected and a dedicated UART for each AC.
-4. Install the firmware and add the ESPHome device to Home Assistant. The climate
-   entity will report state after receiving a valid status from the AC.
+4. Install the firmware and add the device through Home Assistant's
+   [ESPHome integration](https://www.home-assistant.io/integrations/esphome/).
+   The climate entity will report state after receiving a valid status from the AC.
 
 ```yaml
 logger:
@@ -99,6 +103,42 @@ By default, Home Assistant shows device-reported state. For immediate control
 feedback followed by reconciliation, see
 [`optimistic` and migration notes](doc/configuration/README.md#state-reporting-and-migration).
 
+<a id="frequently-asked-questions"></a>
+
+## ❓ Frequently asked questions
+
+### Does this work without the Hisense cloud?
+
+Yes. After setup, Home Assistant communicates with the ESP32 over your local
+network, and the ESP32 communicates with the AC over RS-485. Normal control does
+not require a vendor account or cloud service. Downloading ESPHome and this
+component for installation or updates requires internet access.
+
+### Can I flash ESPHome onto the original Hisense Wi-Fi module?
+
+This project documents **replacing** the original module with an ESP32 and an
+RS-485/UART adapter, not reflashing the stock module. Check the
+[confirmed AC and module combinations](doc/hardware/COMPATIBLE_DEVICES.md) and
+[wiring requirements](doc/hardware/README.md) before buying parts.
+
+### Is this a HACS integration or an infrared remote controller?
+
+Neither. Install `hisense_ac` as an
+[ESPHome external component](https://esphome.io/components/external_components/)
+on the ESP32, then use Home Assistant's ESPHome integration. It communicates
+directly with the AC over a wired RS-485 connection rather than sending infrared
+commands.
+
+### Will Home Assistant reflect changes made with the physical remote?
+
+Yes, when the AC reports a supported status, the component updates Home Assistant
+with device-reported state, including physical-remote changes. Optional controls
+and feedback vary by model; preset feedback is not verified. See
+[state reporting and limitations](doc/configuration/README.md#state-reporting-and-migration).
+For missing or stale updates, start with
+[hardware troubleshooting](doc/hardware/README.md#troubleshooting) and
+[debug logging](doc/configuration/README.md#debug-logging).
+
 <a id="documentation-and-support"></a>
 
 ## 📚 Documentation and support
@@ -115,14 +155,23 @@ feedback followed by reconciliation, see
 Contributions are welcome. Remove passwords, API keys and other secrets from
 logs and configurations before sharing.
 
-## Acknowledgments
+If this component helps you, star the repository to bookmark it, watch releases
+for updates, or contribute a compatibility report or pull request.
+
+<a id="acknowledgments"></a>
+
+## 🙏 Acknowledgments
 
 This project was built based on [esphome_airconintl](https://github.com/pslawinski/esphome_airconintl).
 
-## Disclaimer
+<a id="disclaimer"></a>
+
+## ⚠️ Disclaimer
 
 **USE AT YOUR OWN RISK**: This component is provided "as is" without warranty of any kind, express or implied. The author(s) and contributors of this component take no responsibility for any damage to your air conditioning unit, ESP32 device, or any other equipment that may occur as a result of using this component. By using this component, you acknowledge and agree that you are doing so at your own risk and that you will be solely responsible for any damage that may occur to your equipment.
 
-## License
+<a id="license"></a>
+
+## 📄 License
 
 This project is released under the MIT License.
