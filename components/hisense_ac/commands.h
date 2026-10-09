@@ -32,6 +32,11 @@ inline uint8_t dry_offset_nibble(int8_t offset) {
 // Offset-only KTWDBC command, restricted to -7..7.
 bool encode_dry_offset(int offset, CommandPacket &packet);
 
+enum class SwingAxis { HORIZONTAL, VERTICAL };
+
+// Explicit desired value plus update bit for one axis; preserves legacy auxiliary fields.
+bool encode_swing_axis(SwingAxis axis, bool enabled, CommandPacket &packet);
+
 // Opaque original packets remain immutable, including unused command variants.
 extern const uint8_t on[CMD_SIZE];
 extern const uint8_t off[CMD_SIZE];

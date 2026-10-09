@@ -73,6 +73,24 @@ bool encode_dry_offset(int offset, CommandPacket &packet) {
     return encode_command(body, sizeof(body), packet.data, sizeof(packet.data), packet.size);
 }
 
+bool encode_swing_axis(SwingAxis axis, bool enabled, CommandPacket &packet) {
+    packet.size = 0;
+    const uint8_t *source;
+    uint8_t value_mask;
+    switch (axis) {
+        case SwingAxis::VERTICAL: source = vert_swing; value_mask = 0x80; break;
+        case SwingAxis::HORIZONTAL: source = hor_swing; value_mask = 0x20; break;
+        default: return false;
+    }
+    // These legacy frames contain no stuffing. Keep their beep/position fields.
+    uint8_t body[CMD_SIZE - 6];
+    std::memcpy(body, source + 2, sizeof(body));
+    // Payload starts at frame 16: MSB-first bits 128..131 are at frame 32.
+    // The update bit stays set for both ON and OFF.
+    if (!enabled) body[30] &= static_cast<uint8_t>(~value_mask);
+    return encode_command(body, sizeof(body), packet.data, sizeof(packet.data), packet.size);
+}
+
 const uint8_t on[] = {
     0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01,
     0x00, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00,

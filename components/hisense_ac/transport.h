@@ -63,9 +63,10 @@ private:
     size_t count_{0};
     Operation current_{};
     Step steps_[MAX_STEPS]{};
-    // One dynamic command per logical operation. Never rebuild this packet
-    // while that operation is in flight; queued intents contain values only.
+    // Each dynamic step owns storage until the operation finishes.
+    // Queued intents contain values only.
     CommandPacket temperature_packet_{};
+    CommandPacket swing_packets_[2]{};
     size_t step_count_{0};
     size_t step_{0};
     DeviceStatus status_{};

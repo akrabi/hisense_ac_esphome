@@ -114,8 +114,13 @@ feedback. Measurements and compressor action always come from the AC.
 Pending requests have a bounded lifetime and failures raise a component warning.
 In optimistic mode, failure removes the pending state and restores the latest
 known report; if no report exists, the component does not invent a replacement.
-A timeout does not prove that the AC rejected a command. Controls, especially
-swing toggles, are never blindly retried. Preset commands remain available, but
+A timeout does not prove that the AC rejected a command. Controls are never
+blindly retried. Swing sets explicit ON/OFF values for changed axes, confirming
+each step by polling before proceeding; failed confirmation prevents the next
+axis command. Physical horizontal swing support depends on the unit, and a
+reported flag does not establish motor movement. See
+[explicit swing control](../protocol.md#explicit-swing-control).
+Preset commands remain available, but
 preset status bits are unverified: no confirmed preset is fabricated, and sending
 a preset raises an unverified-operation warning.
 
