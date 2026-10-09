@@ -24,7 +24,8 @@ size - 5, inclusive. Interior `F4` bytes, including checksum bytes, are doubled
 on the wire; each pair contributes one decoded byte. Header/footer markers are
 not stuffed, and stuffing does not change the declared length.
 
-The receive parser accepts **9-128 decoded bytes**. Partial frames expire after
+The receive parser accepts **9-150 decoded bytes**. The fixed buffer holds decoded
+bytes; stuffed wire packets may be longer. Partial frames expire after
 100 ms between consumed bytes; this is a software recovery threshold, not a
 measured bus requirement. Invalid headers, lengths, escapes, checksums and
 footers are rejected, with resynchronization at `F4 F5`.
@@ -34,9 +35,9 @@ footers are rejected, with resynchronization at `F4 F5`.
 | Class at offset 13 | Direction / purpose | Component handling |
 | --- | --- | --- |
 | `0x65` | Control command | Sends the requested control bytes |
-| `0x65` | Control response | Recognizes the 82-byte shape for diagnostics only |
+| `0x65` | Control response | Recognizes the 82/150-byte shapes for diagnostics only |
 | `0x66` | Status query | Sends a read-only poll |
-| `0x66` | Status response | Decodes only checksum-valid 82-byte frames |
+| `0x66` | Status response | Decodes only checksum-valid 82/150-byte frames with subtype `00` at offset 14 |
 
 The status query is:
 
@@ -44,22 +45,26 @@ The status query is:
 F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
 ```
 
-Other response classes and lengths are not decoded as status. In particular,
+Other response classes, subtypes and lengths are not decoded as status. Capability
+subtype `40` cannot publish climate state or confirm commands. In particular,
 160-byte status variants are unsupported, even when their checksums are valid.
 
 ### Control responses (class `0x65`)
 
-An 82-byte control response can contain status-shaped data, but its class alone
+An 82- or 150-byte control response can contain status-shaped data, but its class alone
 does not indicate success or rejection. The component logs it as a control
 response without publishing state, refreshing communication health/status age,
 or advancing an operation. Confirmation requires matching fields in a subsequent
 `0x66` response after an explicit poll. No result-code or short-ACK handling is
 implemented.
 
-## Supported status layout
+## Supported status layouts
 
-An 82-byte status response has length byte `49`, class `66`, data at offsets
-16-77, checksum at 78-79, and footer at 80-81. The component consumes:
+An 82-byte status response has length byte `49`, data at offsets 16-77,
+checksum at 78-79, and footer at 80-81. A 150-byte response has length byte `8D`,
+data at offsets 16-145, checksum at 146-147, and footer at 148-149.
+Both require class `66` and subtype `00`. The component consumes the same
+fields in both layouts:
 
 | Offset | Field / decoding |
 | --- | --- |
@@ -80,6 +85,29 @@ Run value zero means Off; nonzero means powered on. Mode codes are `0` Fan,
 field rather than inventing a new state. Humidity meanings, sensor scaling and
 compressor-field ordering are compatibility mappings, not verified across models.
 Unused bytes still participate in checksum validation.
+
+### 150-byte compatibility scope
+
+The complete response in [issue #16](https://github.com/akrabi/hisense_ac_esphome/issues/16)
+has checksum `06BB`; the existing offsets reproduce its reported active Dry mode,
+Low fan, room temperature and compressor frequencies. The unit/module is not
+identified. A separate [upstream capture](https://github.com/Druidblack/AC-Hisense/pull/3)
+from a reported AEH-W4G1 setup has checksum `0768` and the same ordinary-status
+envelope. These establish packet compatibility, not universal model capability
+or physical validation of every consumed field.
+
+Layout selection is automatic by exact size, class and subtype; no YAML option
+is needed. Existing command bytes, field mappings, optional Dry adjustment,
+polling deadlines and confirmation rules are unchanged. A long control reply is
+still not confirmation. The 100 ms parser timeout is an inter-byte limit, not a
+whole-frame deadline; the 500 ms poll window remains unchanged.
+
+The additional payload stays opaque. Electrical telemetry is not exposed:
+issue #16's candidate power fields agree, but current scaling and a full
+multi-byte voltage interpretation remain unverified. Frame length is not a
+model identifier, and 160-byte replies remain unsupported. Hardware acceptance
+requires identified model/module captures and representative control/readback
+checks, including UART buffering and timing on the actual device.
 
 ### Fan status and Auto confirmation
 
