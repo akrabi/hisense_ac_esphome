@@ -82,6 +82,16 @@ Absolute-temperature gating is checked at both climate acceptance and fresh
 transport status, without changing behavior for configurations without the number.
 Synthetic cases are not hardware validation.
 
+Swing regressions cover all 16 Off/Vertical/Horizontal/Both transitions using
+explicit value/update bits, not a simulated toggle. All four per-axis packets
+are checked against independent historical goldens (including the formerly
+unused `vert_dir`/`hor_dir` OFF variants), wire length, checksum and unchanged
+auxiliary fields. Tests cover no-op requests, axis order, per-step polling,
+queued reversals, remote changes, timeout/mismatched-readback failures without
+later-axis writes or retries, and packet lifetime across combined requests and
+instances. Component tests repeat the matrix in optimistic and device-reported
+modes, checking ESPHome enum mapping and rejection of class-`65` confirmation.
+
 GCC/Clang hosts can configure with `-DENABLE_SANITIZERS=ON` to run AddressSanitizer
 and UndefinedBehaviorSanitizer; CI uses this configuration. The installed MSVC
 19.12 host toolchain does not support these sanitizers, so local Windows tests
@@ -213,3 +223,7 @@ and AC disconnect/reconnect without replaying expired controls. Check UART-write
 latency warnings and Home Assistant responsiveness during bursts and silence.
 Capture packet-only evidence before adding model-specific fields or fault bits.
 Do not mark an untested model supported solely because its packet parses.
+For explicit swing, physically verify vertical ON -> OFF, horizontal ON -> OFF
+if supported, and transitions to/from Both. Record both louver movement and
+class-`66` readback; the 2026-09-25 capture establishes the old OFF defect, not
+hardware acceptance of the replacement encoding.

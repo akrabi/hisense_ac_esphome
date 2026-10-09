@@ -119,8 +119,11 @@ bool Engine::build_steps_() {
         for (uint8_t axis : axes) {
             if ((before.swing ^ r.swing) & axis) {
                 auto after = before;
-                after.swing ^= axis;
-                if (!add_step_(axis == 2 ? vert_swing : hor_swing, CMD_SIZE, after, before)) return false;
+                after.swing = (before.swing & ~axis) | (r.swing & axis);
+                auto &packet = swing_packets_[axis == 2 ? 1 : 0];
+                if (!encode_swing_axis(axis == 2 ? SwingAxis::VERTICAL : SwingAxis::HORIZONTAL,
+                                       (r.swing & axis) != 0, packet) ||
+                    !add_step_(packet.data, packet.size, after, before)) return false;
                 before = after;
             }
         }
@@ -173,7 +176,7 @@ void Engine::finish_(Result result, uint32_t now) {
     }
     if (failure) {
         cancel_pending_(Result::CANCELLED);
-        // One read-only recovery poll; never retry a setter or toggle.
+        // One read-only recovery poll; never retry a setter.
         phase_ = recovering_ ? Phase::IDLE : Phase::RECOVERY;
         deadline_ = now + RESPONSE_TIMEOUT_MS;
         poll_requested_ = false;

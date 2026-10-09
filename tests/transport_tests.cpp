@@ -26,6 +26,26 @@ void tick(transport::Engine &engine, uint32_t from, uint32_t to) {
     for (uint32_t now = from; now != to; ++now) engine.tick(now);
 }
 
+void check_swing_packet(const Bytes &packet, uint8_t axis, bool enabled) {
+    const auto *expected = axis == 2 ? (enabled ? golden::vert_swing : golden::vert_dir) :
+                                      (enabled ? golden::hor_swing : golden::hor_dir);
+    CHECK(packet == Bytes(expected, expected + CMD_SIZE));
+    CHECK(packet[32] == (axis == 2 ? (enabled ? 0xC0 : 0x40) : (enabled ? 0x30 : 0x10)));
+    auto sealed = packet;
+    seal(sealed);
+    CHECK(packet == wire(sealed));
+}
+
+void swing_encoding() {
+    for (uint8_t axis : {1, 2}) {
+        for (bool enabled : {false, true}) {
+            CommandPacket packet;
+            CHECK(encode_swing_axis(axis == 2 ? SwingAxis::VERTICAL : SwingAxis::HORIZONTAL, enabled, packet));
+            check_swing_packet(Bytes(packet.data, packet.data + packet.size), axis, enabled);
+        }
+    }
+}
+
 void swing_transitions() {
     for (uint8_t before = 0; before < 4; ++before) {
         for (uint8_t after = 0; after < 4; ++after) {
@@ -41,24 +61,32 @@ void swing_transitions() {
             device.up_down = (before & 2) != 0;
             size_t observed = 0;
             unsigned controls = 0;
+            unsigned confirmed_steps = 0;
+            const uint8_t first_axis = before == 1 && after == 2 ? 1 : 2;
+            uint8_t remaining = before ^ after;
             for (uint32_t now = 0; now < 3000; ++now) {
                 engine.tick(now);
                 while (observed < host.writes.size()) {
                     const auto &packet = host.writes[observed++];
                     if (packet[13] == 0x66) continue;
+                    CHECK(controls == confirmed_steps);
+                    const uint8_t axis = remaining & first_axis ? first_axis : first_axis ^ 3;
+                    CHECK((remaining & axis) != 0);
+                    remaining &= ~axis;
+                    check_swing_packet(packet, axis, (after & axis) != 0);
                     ++controls;
-                    if (packet == Bytes(vert_swing, vert_swing + CMD_SIZE))
-                        device.up_down = !device.up_down;
-                    else {
-                        CHECK(packet == Bytes(hor_swing, hor_swing + CMD_SIZE));
-                        device.left_right = !device.left_right;
-                    }
+                    if (packet[32] & 0x40) device.up_down = (packet[32] & 0x80) != 0;
+                    if (packet[32] & 0x10) device.left_right = (packet[32] & 0x20) != 0;
                 }
-                if (now % 100 == 50) engine.receive(device, now);
+                if (now % 100 == 50 && engine.phase() == transport::Phase::WAIT_STATUS) {
+                    engine.receive(device, now);
+                    confirmed_steps = controls;
+                }
             }
             const auto changed = before ^ after;
             CHECK(controls == unsigned(bool(changed & 1)) + unsigned(bool(changed & 2)));
             CHECK(device.left_right == bool(after & 1) && device.up_down == bool(after & 2));
+            CHECK(remaining == 0);
             CHECK(host.results.size() == 1 && host.results[0].second == transport::Result::CONFIRMED);
         }
     }
@@ -81,9 +109,9 @@ void swing_transitions() {
         while (observed < host.writes.size()) {
             const auto &packet = host.writes[observed++];
             if (packet[13] == 0x66) continue;
-            CHECK(packet == Bytes(vert_swing, vert_swing + CMD_SIZE));
+            check_swing_packet(packet, 2, controls == 0);
             ++controls;
-            device.up_down = !device.up_down;
+            device.up_down = (packet[32] & 0x80) != 0;
         }
         if (now % 100 == 50) engine.receive(device, now);
     }
@@ -110,19 +138,66 @@ void swing_transitions() {
     CHECK(controls == 1);
 }
 
+void swing_confirmation_failures() {
+    for (uint8_t before = 0; before < 4; ++before) {
+        for (uint8_t after = 0; after < 4; ++after) {
+            if (before == after) continue;
+            for (bool mismatch : {false, true}) {
+                Host host;
+                transport::Engine engine(&host);
+                transport::Request request;
+                request.fields = transport::SWING;
+                request.swing = after;
+                uint32_t generation;
+                CHECK(engine.enqueue(request, 0, generation));
+                auto device = state();
+                device.left_right = (before & 1) != 0;
+                device.up_down = (before & 2) != 0;
+                engine.tick(0);
+                engine.receive(device, 100);
+                engine.tick(100);
+                CHECK(host.writes.size() == 2);
+                // A later request cannot overwrite in-flight packet storage or survive failure.
+                request.swing = before;
+                CHECK(engine.enqueue(request, 100, generation));
+                auto early = device;
+                early.left_right = (after & 1) != 0;
+                early.up_down = (after & 2) != 0;
+                engine.receive(early, 150);
+                CHECK(host.results.empty() && engine.busy());
+                for (uint32_t now = 151; now <= 12000; ++now) {
+                    engine.tick(now);
+                    if (mismatch && now % 100 == 50) engine.receive(device, now);
+                }
+                CHECK(!engine.busy() && engine.pending() == 0);
+                CHECK(host.results.size() >= 2);
+                CHECK(host.results[0].second == (mismatch ? transport::Result::EXPIRED : transport::Result::TIMEOUT));
+                CHECK(host.results[1].second == transport::Result::CANCELLED);
+                unsigned controls = 0;
+                for (const auto &packet : host.writes) controls += packet[13] == 0x65;
+                CHECK(controls == 1);
+            }
+        }
+    }
+}
+
 void command_packet_lifetime() {
     Host first_host, second_host;
     transport::Engine first(&first_host), second(&second_host);
     transport::Request request;
-    request.fields = transport::MODE | transport::TEMPERATURE;
+    request.fields = transport::MODE | transport::TEMPERATURE | transport::SWING;
     request.mode = 1;
     request.temperature = 16;
+    request.swing = 3;
     uint32_t generation;
     CHECK(first.enqueue(request, 0, generation));
     request.temperature = 27;
+    request.swing = 0;
     CHECK(second.enqueue(request, 0, generation));
     first.tick(0); second.tick(0);
-    first.receive(state(), 100); second.receive(state(), 100);
+    auto both = state();
+    both.left_right = both.up_down = true;
+    first.receive(state(), 100); second.receive(both, 100);
     // Both have built a deferred temperature step, but first send the mode.
     request.fields = transport::TEMPERATURE;
     request.temperature = 30;
@@ -133,10 +208,27 @@ void command_packet_lifetime() {
     auto heat = state();
     heat.mode_status = 1;
     heat.indoor_temperature_setting = 18;
-    first.receive(heat, 700); second.receive(heat, 700);
+    first.receive(heat, 700);
+    both.mode_status = 1;
+    both.indoor_temperature_setting = 18;
+    second.receive(both, 700);
     first.tick(701); second.tick(701);
     CHECK(first_host.writes.back() == Bytes(golden::temp_16_C, golden::temp_16_C + sizeof(golden::temp_16_C)));
     CHECK(second_host.writes.back() == Bytes(golden::temp_27_C, golden::temp_27_C + sizeof(golden::temp_27_C)));
+    tick(first, 702, 1300); tick(second, 702, 1300);
+    heat.indoor_temperature_setting = 16;
+    both.indoor_temperature_setting = 27;
+    first.receive(heat, 1300); second.receive(both, 1300);
+    first.tick(1301); second.tick(1301);
+    check_swing_packet(first_host.writes.back(), 2, true);
+    check_swing_packet(second_host.writes.back(), 2, false);
+    tick(first, 1302, 1900); tick(second, 1302, 1900);
+    heat.up_down = true;
+    both.up_down = false;
+    first.receive(heat, 1900); second.receive(both, 1900);
+    first.tick(1901); second.tick(1901);
+    check_swing_packet(first_host.writes.back(), 1, true);
+    check_swing_packet(second_host.writes.back(), 1, false);
 }
 
 void fan_status_confirmation() {
@@ -193,7 +285,9 @@ void fan_status_confirmation() {
 }
 
 int main() {
+    swing_encoding();
     swing_transitions();
+    swing_confirmation_failures();
     command_packet_lifetime();
     fan_status_confirmation();
     transport::Request temp;
@@ -278,7 +372,7 @@ int main() {
     poller.tick(100);
     CHECK(polling.writes.size() == 2 && polling.writes.back()[13] == 0x66);
 
-    // Toggle ambiguity is never retried.
+    // Missing swing confirmation is never retried.
     Host toggle;
     transport::Engine toggler(&toggle);
     transport::Request swing;
@@ -317,6 +411,6 @@ int main() {
     auto horizontal = state(); horizontal.left_right = true;
     transition_engine.receive(horizontal, 100);
     transition_engine.tick(100);
-    CHECK(transition.writes.back() == Bytes(hor_swing, hor_swing + CMD_SIZE));
+    check_swing_packet(transition.writes.back(), 1, false);
     return 0;
 }

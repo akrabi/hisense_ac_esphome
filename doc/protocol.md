@@ -206,10 +206,45 @@ class-`0x66` polls. It does not insert an intermediate neutral write or restore
 an offset on boot. The mode-plus-offset variant (`70` at command byte 18)
 also changed fan feedback from Auto `01` to Low `0A`; it is not used.
 
+### Explicit swing control
+
+Swing uses explicit per-axis desired values plus update bits, **not toggles**.
+In the 30-byte command payload starting at decoded frame offset 16, MSB-first
+bits 128/129 are the vertical value/update pair and 130/131 are horizontal.
+Both pairs therefore occupy decoded command byte 32 (not status byte 35).
+
+| Axis | ON at byte 32 | OFF at byte 32 | Update mask | Value mask |
+| --- | --- | --- | --- | --- |
+| Vertical | `C0` | `40` | `40` | `80` |
+| Horizontal | `30` | `10` | `10` | `20` |
+
+The encoder preserves the historical auxiliary bytes: beep at byte 23=`04`,
+vertical position update at byte 31=`01`, and the horizontal packet's separate
+left/right swing update fields at byte 37=`14`. The external `KTVF` and `KTHFM`
+definitions corroborate these auxiliary fields; their necessity and exact
+physical effects across models are not established. Only the selected axis's
+desired value changes; framing, checksum and escaping use the shared encoder.
+ON remains byte-for-byte identical to the legacy `vert_swing`/`hor_swing`
+packets, and OFF matches the legacy `vert_dir`/`hor_dir` packets.
+
+The component takes a fresh baseline and sends only changed axes, confirming
+each intermediate state by polling before sending the next command. Opposite
+single-axis transitions disable the old axis first. Other two-axis transitions
+retain vertical-first order. Each axis has separate packet storage for the
+duration of the operation. An unchanged request sends no setter.
+
+In the maintainer's 2026-09-25 capture, operations 18-23 demonstrated that the
+same vertical-enable packet worked for ON but did not clear vertical swing for
+OFF. Attempts at horizontal-only never reached the horizontal step because
+vertical-disable failed. Enabling horizontal from Vertical produced Both
+feedback, but the maintainer observed only vertical movement. The explicit OFF
+encoding is reference-backed, not yet physically validated on that unit;
+horizontal motor capability remains unresolved. A feedback flag alone is not
+proof of louver movement or universal model compatibility.
+
 ### Other controls and transaction limits
 
-Swing commands toggle individual axes. The component reads the current state
-and confirms each toggle before sending the next. Preset feedback is unverified;
+Preset feedback is unverified;
 sending preset bytes does not imply a confirmed preset.
 
 The transaction sequence is **baseline poll -> control -> settle -> confirmation
@@ -238,5 +273,9 @@ unique command correlation.
 - [Regression tests and capture provenance](../tests/README.md)
 - [External protocol implementation, pinned revision 96f355b](https://github.com/straga/hisense_ac_xm_protocol/blob/96f355b12da33c1c187f9d31cace1b02abcf2446/src/protocol/air-condition_msg.c):
   corroborates set/query classes `101`/`102`, Auto feedback `1`, and KTWDBC
-  adjustment fields; other mappings must not be assumed to match this component
-  or every model.
+  adjustment fields, plus explicit swing and auxiliary fields in `KTVFC`,
+  `KTHFC`, `KTVF` and `KTHFM`. Some registrations are marked unverified;
+  mappings must not be assumed to match every model.
+- AEH-W4G2 explicit swing encoding, pinned revision `de6743d`:
+  [field offsets](https://github.com/kadam12g/AEH-W4G2-ESPHome/blob/de6743d0bf7ebda20924608c3d30a69f4b1d01cc/my_components/hisense_ac/command_sender.h)
+  and [value/update encoding and frame construction](https://github.com/kadam12g/AEH-W4G2-ESPHome/blob/de6743d0bf7ebda20924608c3d30a69f4b1d01cc/my_components/hisense_ac/command_sender.cpp).

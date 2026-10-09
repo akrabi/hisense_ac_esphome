@@ -185,6 +185,67 @@ void unknown_fields_and_presets() {
     CHECK(!optimistic.ac.preset.has_value()); // Unverified is not confirmed NONE.
 }
 
+void swing_control_and_reporting() {
+    const climate::ClimateSwingMode modes[] = {
+        climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_HORIZONTAL,
+        climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_BOTH};
+    for (bool optimistic : {false, true}) {
+        for (uint8_t before = 0; before < 4; ++before) {
+            for (uint8_t after = 0; after < 4; ++after) {
+                Rig rig(optimistic);
+                auto frame = Rig::report();
+                frame[35] = ((before & 1) ? 0x40 : 0) | ((before & 2) ? 0x80 : 0);
+                seal(frame);
+                rig.ac.loop();
+                rig.receive(frame, 100);
+                CHECK(rig.ac.swing_mode == modes[before]);
+                climate::ClimateCall call;
+                call.requested_swing = modes[after];
+                test_logs.clear();
+                rig.ac.control(call);
+                CHECK(rig.ac.swing_mode == modes[optimistic ? after : before]);
+                rig.ac.loop();
+                CHECK(rig.bus.tx.size() == 2 && rig.bus.tx.back()[13] == 0x66);
+                rig.receive(frame, 200);
+                uint8_t current = before;
+                const uint8_t first_axis = before == 1 && after == 2 ? 1 : 2;
+                const uint8_t axes[] = {first_axis, static_cast<uint8_t>(first_axis ^ 3)};
+                size_t controls = 0;
+                uint32_t now = 200;
+                for (uint8_t axis : axes) {
+                    if (((before ^ after) & axis) == 0) continue;
+                    const auto packet = rig.bus.tx.back();
+                    CHECK(packet[13] == 0x65);
+                    CHECK(packet[32] == (axis == 2 ? ((after & axis) ? 0xC0 : 0x40) :
+                                                                    ((after & axis) ? 0x30 : 0x10)));
+                    ++controls;
+                    current = (current & ~axis) | (after & axis);
+                    frame[35] = ((current & 1) ? 0x40 : 0) | ((current & 2) ? 0x80 : 0);
+                    seal(frame);
+                    auto reply = frame;
+                    reply[13] = 0x65;
+                    seal(reply);
+                    const auto publications = rig.ac.publications.size();
+                    const auto writes = rig.bus.tx.size();
+                    rig.receive(reply, now + 100);
+                    CHECK(rig.ac.publications.size() == publications && rig.bus.tx.size() == writes);
+                    rig.until(now + 600);
+                    CHECK(rig.bus.tx.back()[13] == 0x66);
+                    rig.receive(frame, now + 601);
+                    CHECK(rig.ac.swing_mode == modes[optimistic ? after : current]);
+                    now += 601;
+                }
+                CHECK(rig.bus.tx.size() == 2 + 2 * controls);
+                CHECK(rig.ac.swing_mode == modes[after] && !rig.ac.warning);
+                bool confirmed = false;
+                for (const auto &entry : test_logs)
+                    confirmed |= entry.message.find("Operation 1 CONFIRMED:") != std::string::npos;
+                CHECK(confirmed);
+            }
+        }
+    }
+}
+
 void fan_status_reporting() {
     const climate::ClimateFanMode expected[] = {
         climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_QUIET,
@@ -455,6 +516,7 @@ int main() {
     optimistic_state_and_failures();
     generations_and_reconciliation();
     unknown_fields_and_presets();
+    swing_control_and_reporting();
     fan_status_reporting();
     grouped_fan_display_preserves_confirmation();
     temperature_memory_with_unknown_fields();
