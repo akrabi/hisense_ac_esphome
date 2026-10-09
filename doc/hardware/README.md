@@ -1,10 +1,17 @@
-# Hardware
+# Hisense Wi-Fi Module Replacement: ESP32 and RS-485 Wiring
+
+Build an ESP32 replacement adapter for local air conditioner control with
+ESPHome and Home Assistant. This guide covers parts, disassembly and wiring;
+it does not cover reflashing the original Hisense Wi-Fi module.
+
+[Project overview](../../README.md) | [Compatible AC models](COMPATIBLE_DEVICES.md) |
+[ESPHome configuration](../configuration/README.md)
 
 ## Compatibility
 
 This device is meant to replace the Hisense Wifi Module (e.g. AEH-W4F1, AEH-W4A1) and communicates with the AC over RS485 using the XM protocol.
 
-![Wifi Module](img/aeh-w4f1.jpg)
+![Original Hisense AEH-W4F1 air conditioner Wi-Fi module](img/aeh-w4f1.jpg)
 
 The ESP32 is fed 5v directly form the AC unit, make sure that your AC outputs 5V, otherwise a buck converter is required.
 The easiest way is to make sure your device is part of the [compatible devices](COMPATIBLE_DEVICES.md).
@@ -43,7 +50,7 @@ All parts can be easily found on AliExpress/Amazon.
 
 ### Wiring
 1. **Wiring Diagram**
-   ![Circuit Diagram](img/sketch_bb.jpg)
+   ![ESP32 GPIO16 and GPIO17 wiring to the RS-485 adapter and AC connector](img/sketch_bb.jpg)
    
    Connect the components as follows:
    - ESP32 to RS485 converter:

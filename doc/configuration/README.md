@@ -1,10 +1,22 @@
-# Configuration
+# Hisense Air Conditioner ESPHome Configuration
 
-For a full working example configuration see the configuration folder.
+Configure the `hisense_ac` external component for local Home Assistant climate
+control, optional sensors and diagnostics over an ESP32 RS-485 connection.
 
-The checked-in examples use a local component path relative to
-`doc/configuration/examples`. When copying them elsewhere, adjust that path or
-use the GitHub source below.
+For a short setup walkthrough, start with the [quick start](../../README.md#quick-start).
+For full multi-room configurations, see the [examples](examples).
+
+[Installation](#installation) | [Configuration variables](#configuration-variables) |
+[State reporting](#state-reporting-and-migration) |
+[Diagnostics](#optional-diagnostics-and-capabilities) |
+[Debug logging](#debug-logging) | [Dry adjustment](#optional-dry-adjustment)
+
+The examples download the component from GitHub, so they do not require a local
+checkout. Copy `ac-common.yaml`, a room YAML and `secrets.yaml` into your ESPHome
+configuration directory. Replace the example secrets, generate your own API
+encryption key, and adjust the board, UART pins and network settings before use.
+For local component development, replace the GitHub source with a `type: local`
+source pointing to your checkout's `components` directory.
 
 ## Installation
 
@@ -185,7 +197,7 @@ are rejected even when invoked directly through an automation.
 Named hardware faults and confirmed preset feedback remain unexposed until
 their bit meanings and model applicability are verified.
 
-# Example ESP32 Setup
+## Example ESP32 Setup
 
 ```yaml
 # Basic ESP32 setup
@@ -205,7 +217,7 @@ uart:
   stop_bits: 1
 ```
 
-### Debug Logging
+## Debug Logging
 
 Enable detailed logging by adding to your configuration:
 
@@ -274,7 +286,7 @@ For protocol investigations, record the physical-remote setting and action
 timestamp alongside full logs so changes can be correlated with complete frames.
 Tracing does not add support for new controls, response classes, or fan codes.
 
-### Optional Dry adjustment
+## Optional Dry adjustment
 
 For units that use a signed adjustment instead of an absolute temperature in
 Dry mode, add `dry_offset` under the climate entry:
