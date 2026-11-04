@@ -42,11 +42,17 @@ The easiest way is to make sure your device is part of the [compatible devices](
 ## Assembly
 
 ### Required parts
-- ESP32 development board (tested with ESP-WROOM-32)
+- ESP32 development board
 - RS485<->Uart(TTL) converter
 - JST SM 2.54mm 4 Pin Male Connector
 
 All parts can be easily found on AliExpress/Amazon.
+
+#### Confirmed working ESP32 development boards
+
+- ESP-WROOM-32
+- LOLIN/Wemos ESP32-S2 mini ([issue #19](https://github.com/akrabi/hisense_ac_esphome/issues/19))
+- ESP32-S3
 
 ### Wiring
 1. **Wiring Diagram**

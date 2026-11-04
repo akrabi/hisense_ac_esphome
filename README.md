@@ -39,6 +39,7 @@ These setups have been reported working with **this component**:
 | Tornado TOP-INV-120A (WIFI) | AEH-W4F1 |
 | Tornado MULTI-12A (WIFI) (AST-09UW4RVETV00D, 2020) | AEH-W4G2 |
 | Hisense AST-12UW4RVETG00A | AEH-W4E1 |
+| Hisense New Comfort DJ25VE0BG (multi-split, 2021) | AEH-W4E1 |
 | ACOND ASTI-09UW4RVEDC00 | AEH-W4B1 |
 
 See the [full compatibility notes](doc/hardware/COMPATIBLE_DEVICES.md) for the
