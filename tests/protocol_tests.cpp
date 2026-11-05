@@ -56,18 +56,18 @@ void malformed_and_bounds() {
         CHECK(feed(parser, wire(bad), now) == 0);
         CHECK(feed(parser, good, now) == 1);
     }
-    // Framing is bounded separately from the single supported status layout.
+    // Framing is bounded separately from the supported status layouts.
     for (size_t length = 9; length <= protocol::MAX_FRAME_SIZE; ++length) {
         const auto frame = synthetic(length);
         CHECK(feed(parser, wire(frame), now) == 1);
         DeviceStatus status;
-        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82));
+        CHECK(protocol::decode_status(parser.data(), length, status) == (length == 82 || length == 150));
     }
     for (size_t length = protocol::MAX_FRAME_SIZE + 1; length <= 264; ++length) {
         CHECK(feed(parser, wire(synthetic(length)), now) == 0);
         CHECK(feed(parser, good, now) == 1);
     }
-    CHECK(protocol::MAX_FRAME_SIZE == 128);
+    CHECK(protocol::MAX_FRAME_SIZE == 150);
     auto maximum = synthetic(protocol::MAX_FRAME_SIZE);
     std::fill(maximum.begin() + 5, maximum.end() - 4, 0xF4);
     seal(maximum);
@@ -162,6 +162,85 @@ void checksum_end_boundary() {
     }
 }
 
+void extended_status_captures() {
+    for (const char *name : {"issue_16_status_150.hex", "upstream_pr_3_status_150.hex"}) {
+        const auto frame = capture(name);
+        const auto packet = wire(frame);
+        CHECK(frame.size() == 150);
+        for (size_t split = 0; split <= packet.size(); ++split) {
+            protocol::FrameParser parser;
+            uint32_t now = 0;
+            auto count = feed(parser, Bytes(packet.begin(), packet.begin() + split), now);
+            now += 20;
+            count += feed(parser, Bytes(packet.begin() + split, packet.end()), now);
+            CHECK(count == 1 && parser.invalid_frames() == 0);
+            CHECK(std::memcmp(parser.data(), frame.data(), frame.size()) == 0);
+            DeviceStatus status;
+            CHECK(protocol::decode_status(parser.data(), frame.size(), status));
+            CHECK(status.wind_status == frame[16] && status.run_status == 2);
+            CHECK(status.mode_status == (frame[18] >> 4));
+            CHECK(status.indoor_temperature_setting == frame[19]);
+            CHECK(status.indoor_temperature_status == frame[20]);
+            CHECK(status.compressor_frequency == frame[41]);
+            CHECK(status.compressor_frequency_setting == frame[42]);
+            CHECK(status.compressor_frequency_send == frame[43]);
+        }
+        for (size_t end = 1; end < packet.size(); ++end) {
+            protocol::FrameParser parser;
+            uint32_t now = 0;
+            CHECK(feed(parser, Bytes(packet.begin(), packet.begin() + end), now) == 0);
+            CHECK(feed(parser, packet, now) == 1);
+        }
+        protocol::FrameParser parser;
+        uint32_t now = 0;
+        Bytes mixed = packet;
+        for (const auto &next : {wire(capture()), packet, packet, wire(capture())})
+            mixed.insert(mixed.end(), next.begin(), next.end());
+        CHECK(feed(parser, mixed, now) == 5);
+        for (size_t index : {size_t(4), size_t(80), size_t(128), size_t(145),
+                             size_t(146), size_t(147), size_t(148), size_t(149)}) {
+            auto bad = frame;
+            bad[index] ^= 1;
+            CHECK(feed(parser, wire(bad), now) == 0);
+            DeviceStatus retained;
+            retained.indoor_temperature_setting = 31;
+            CHECK(!protocol::decode_status(bad.data(), bad.size(), retained));
+            CHECK(retained.indoor_temperature_setting == 31);
+            CHECK(feed(parser, packet, now) == 1);
+        }
+        auto escaped = frame;
+        escaped[80] = escaped[128] = 0xF4;
+        seal(escaped);
+        // Force a stuffed checksum byte as well as stuffed extended payload.
+        escaped[145] += static_cast<uint8_t>(0xF4 - escaped[147]);
+        seal(escaped);
+        CHECK(escaped[147] == 0xF4);
+        CHECK(wire(escaped).size() > protocol::MAX_FRAME_SIZE);
+        CHECK(feed(parser, wire(escaped), now) == 1);
+        CHECK(std::memcmp(parser.data(), escaped.data(), escaped.size()) == 0);
+        DeviceStatus status;
+        CHECK(protocol::decode_status(parser.data(), escaped.size(), status));
+    }
+    for (size_t size : {size_t(82), size_t(150)}) {
+        auto frame = synthetic(size);
+        DeviceStatus retained;
+        retained.indoor_temperature_setting = 31;
+        for (unsigned subtype = 1; subtype <= 255; ++subtype) {
+            frame[14] = static_cast<uint8_t>(subtype);
+            seal(frame);
+            CHECK(!protocol::decode_status(frame.data(), frame.size(), retained));
+            CHECK(retained.indoor_temperature_setting == 31);
+        }
+        frame[14] = 0;
+        for (uint8_t other_class : {uint8_t(0x65), uint8_t(0x67)}) {
+            frame[13] = other_class;
+            seal(frame);
+            CHECK(!protocol::decode_status(frame.data(), frame.size(), retained));
+            CHECK(retained.indoor_temperature_setting == 31);
+        }
+    }
+}
+
 void control_response_captures() {
     for (const char *name : {"cool_control_65.hex", "cool_poll_66.hex",
                              "dry_control_65.hex", "dry_poll_66.hex"}) {
@@ -188,7 +267,7 @@ void control_response_captures() {
 void timeouts_and_instances() {
     protocol::FrameParser first, second;
     const auto a = wire(capture());
-    auto b_decoded = synthetic();
+    auto b_decoded = capture("issue_16_status_150.hex");
     b_decoded[21] = 0xF4;
     seal(b_decoded);
     const auto b = wire(b_decoded);
@@ -233,8 +312,8 @@ void timeouts_and_instances() {
     CHECK(feed(first, a, now) == 1);
 }
 
-void decoding() {
-    auto frame = synthetic();
+void decoding(size_t size) {
+    auto frame = synthetic(size);
     frame[16] = 18;
     frame[18] = 0x2C;
     frame[19] = 23;
@@ -283,7 +362,7 @@ void decoding() {
     CHECK(!protocol::decode_status(frame.data(), 0, status));
     frame[13] = 0x66;
     seal(frame);
-    frame[79] ^= 1;
+    frame[size - 3] ^= 1;
     CHECK(!protocol::decode_status(frame.data(), frame.size(), status));
     CHECK(status.indoor_temperature_setting == 23);
     const auto real = capture();
@@ -309,10 +388,12 @@ int main() {
     framing();
     malformed_and_bounds();
     public_issue_captures();
+    extended_status_captures();
     control_response_captures();
     checksum_end_boundary();
     timeouts_and_instances();
-    decoding();
+    decoding(82);
+    decoding(150);
     deterministic_noise();
     return 0;
 }

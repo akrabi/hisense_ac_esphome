@@ -8,8 +8,12 @@ namespace esphome {
 namespace hisense_ac {
 namespace protocol {
 
-constexpr size_t MAX_FRAME_SIZE = 128;
 constexpr size_t STATUS_FRAME_SIZE = 82;
+constexpr size_t EXTENDED_STATUS_FRAME_SIZE = 150;
+constexpr size_t MAX_FRAME_SIZE = EXTENDED_STATUS_FRAME_SIZE;
+constexpr bool is_status_frame_size(size_t size) {
+    return size == STATUS_FRAME_SIZE || size == EXTENDED_STATUS_FRAME_SIZE;
+}
 // Software recovery threshold, not a hardware-verified bus timing constraint.
 constexpr uint32_t INTER_BYTE_TIMEOUT_MS = 100;
 enum class ParseError { NONE, HEADER, LENGTH, ESCAPE, FOOTER, CHECKSUM, TIMEOUT };
@@ -37,7 +41,7 @@ private:
     ParseError last_error_{ParseError::NONE};
 };
 
-// Validates the envelope, checksum, class and supported 82-byte status layout.
+// Validates the envelope, checksum, class, subtype and supported 82/150-byte layout.
 // Decodes only consumed fields; the remaining payload is opaque.
 // On failure, leaves the caller's last decoded snapshot unchanged.
 bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status);

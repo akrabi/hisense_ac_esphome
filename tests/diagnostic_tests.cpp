@@ -90,7 +90,7 @@ void packet_traces() {
 
     // Unsupported classes and short/maximum-length frames are traced, not published.
     const auto publications = rig.ac.publications.size();
-    for (const size_t size : {size_t{9}, size_t{17}, size_t{18}, size_t{82}, size_t{128}}) {
+    for (const size_t size : {size_t{9}, size_t{17}, size_t{18}, size_t{82}, size_t{128}, size_t{150}}) {
         auto unknown = synthetic(size);
         if (size >= 18) unknown[13] = 0x65;
         seal(unknown);
@@ -98,8 +98,9 @@ void packet_traces() {
         rig.receive(wire(unknown), 200);
         CHECK(logged_packet("RX decoded") == unknown);
         CHECK(has_log("hisense_ac.protocol", size >= 18 ? "class=0x65" : "class=n/a"));
-        CHECK(has_log("hisense_ac", size == 82 ? "Control response (82 bytes, class=0x65)" :
-                                               "Ignoring unsupported response"));
+        CHECK(has_log("hisense_ac", (size == 82 || size == 150) ?
+                      "Control response (" + std::to_string(size) + " bytes, class=0x65)" :
+                      "Ignoring unsupported response"));
         CHECK(rig.ac.publications.size() == publications && rig.ac.target_temperature == 22);
         CHECK(rig.invalid.get_raw_state() == 0);
     }
@@ -120,6 +121,113 @@ void packet_traces() {
     CHECK(!has_log("hisense_ac.protocol", "RX decoded"));
     CHECK(!has_log("hisense_ac", "Control response"));
     CHECK(rig.invalid.get_raw_state() == 1);
+}
+
+void extended_status_integration() {
+    for (bool optimistic : {false, true}) {
+        test_clock = 0;
+        Diagnostics rig;
+        rig.ac.set_optimistic(optimistic);
+        sensor::Sensor frequency, setting, sent;
+        rig.ac.set_compressor_frequency(&frequency);
+        rig.ac.set_compressor_frequency_setting(&setting);
+        rig.ac.set_compressor_frequency_send(&sent);
+        auto baseline = capture("issue_16_status_150.hex");
+        test_logs.clear();
+        rig.loop(0);
+        const auto packet = wire(baseline);
+        for (size_t i = 0; i < packet.size(); ++i)
+            rig.receive({packet[i]}, 100 + static_cast<uint32_t>(i));
+        CHECK(logged_packet("RX decoded") == baseline);
+        CHECK(rig.ac.mode == climate::CLIMATE_MODE_DRY);
+        CHECK(rig.ac.fan_mode == climate::CLIMATE_FAN_LOW);
+        CHECK(rig.ac.current_temperature == 23 && rig.ac.target_temperature == 22);
+        CHECK(frequency.get_raw_state() == 43 && setting.get_raw_state() == 40 &&
+              sent.get_raw_state() == 41);
+        CHECK(rig.connected.state && rig.invalid.get_raw_state() == 0);
+        rig.loop(600);
+        CHECK(rig.timeouts.get_raw_state() == 0 && rig.bus.tx.size() == 1);
+
+        // Synthetic fan change: the hardware capture is the baseline only.
+        climate::ClimateCall call;
+        call.requested_fan = climate::CLIMATE_FAN_HIGH;
+        rig.ac.control(call);
+        rig.loop(601);
+        auto desired = baseline;
+        desired[16] = 18;
+        seal(desired);
+        auto control = desired;
+        control[13] = 0x65;
+        seal(control);
+        auto capability = desired;
+        capability[14] = 0x40;
+        seal(capability);
+        const auto before_baseline = rig.ac.publications.size();
+        rig.receive(wire(control), 650);
+        rig.receive(wire(capability), 660);
+        CHECK(rig.bus.tx.size() == 2 && rig.bus.tx.back()[13] == 0x66);
+        CHECK(rig.ac.publications.size() == before_baseline);
+        rig.receive(wire(baseline), 700);
+        CHECK(rig.bus.tx.size() == 3 &&
+              rig.bus.tx.back() == Bytes(speed_max, speed_max + CMD_SIZE));
+        rig.loop(800);
+        rig.loop(1300);
+        CHECK(rig.bus.tx.size() == 4 && rig.bus.tx.back()[13] == 0x66);
+        const auto publications = rig.ac.publications.size();
+        const auto measurements = frequency.publications.size();
+        test_logs.clear();
+        rig.receive(wire(control), 1320);
+        rig.receive(wire(capability), 1330);
+        auto corrupted = desired;
+        corrupted[145] ^= 1;
+        rig.receive(wire(corrupted), 1340);
+        rig.receive(wire(capture("issue_6_status_160.hex")), 1350);
+        CHECK(rig.ac.publications.size() == publications);
+        CHECK(frequency.publications.size() == measurements);
+        CHECK(has_log("hisense_ac", "Control response (150 bytes, class=0x65)"));
+        CHECK(!has_log("hisense_ac", "Operation 1 CONFIRMED"));
+        rig.receive(wire(desired), 1400);
+        CHECK(has_log("hisense_ac", "Operation 1 CONFIRMED"));
+        CHECK(rig.ac.fan_mode == climate::CLIMATE_FAN_HIGH);
+        CHECK(rig.timeouts.get_raw_state() == 0 && rig.connected.state);
+        CHECK(rig.bus.tx.size() == 4);
+        rig.receive(wire(capability), 2500);
+        CHECK(rig.age.get_raw_state() == 1);
+        // The same instance can return to the original supported layout.
+        rig.receive(wire(status()), 2600);
+        CHECK(rig.ac.mode == climate::CLIMATE_MODE_COOL && rig.age.get_raw_state() == 0);
+    }
+    // Non-status replies cannot establish health even with a supported length.
+    for (size_t size : {size_t(82), size_t(150)}) {
+        test_clock = 0;
+        Diagnostics rig;
+        rig.loop(0);
+        for (uint8_t response_class : {uint8_t(0x65), uint8_t(0x66), uint8_t(0x67)}) {
+            auto frame = synthetic(size);
+            frame[13] = response_class;
+            frame[14] = response_class == 0x66 ? 0x40 : 0;
+            seal(frame);
+            rig.receive(wire(frame), 100);
+        }
+        CHECK(!rig.connected.state && !rig.age.has_state());
+        CHECK(rig.ac.publications.empty());
+        rig.loop(600);
+        rig.loop(601);
+        CHECK(rig.timeouts.get_raw_state() == 1);
+    }
+    for (bool late : {false, true}) {
+        test_clock = 0;
+        Diagnostics rig;
+        rig.loop(0);
+        const uint32_t deadline = transport::Engine::wire_time_ms(rig.bus.tx.back().size()) +
+                                  transport::RESPONSE_TIMEOUT_MS;
+        const auto packet = wire(capture("issue_16_status_150.hex"));
+        const uint32_t finish = deadline - (late ? 0 : 1);
+        for (size_t i = 0; i < packet.size(); ++i)
+            rig.receive({packet[i]}, finish - static_cast<uint32_t>(packet.size() - 1 - i));
+        rig.loop(deadline + 1);
+        CHECK(rig.timeouts.get_raw_state() == (late ? 1 : 0));
+    }
 }
 
 void captured_control_responses() {
@@ -279,6 +387,7 @@ void operation_traces() {
 int main() {
     packet_traces();
     captured_control_responses();
+    extended_status_integration();
     operation_traces();
     test_clock = 0;
     Diagnostics rig;
