@@ -9,6 +9,9 @@ ESPHome version pinned in `requirements-dev.txt` (2026.8.2) and the latest stabl
 release. To reproduce the latest lane locally, install the requirements and then
 run `python -m pip install --upgrade esphome` in the same virtual environment.
 Each CI job prints the resolved ESPHome version.
+The same workflow runs every Monday at 06:00 UTC on the default branch to catch
+upstream compatibility breaks, and can be started manually from the Actions tab.
+The schedule takes effect once the workflow is merged into the default branch.
 
 | Configuration | Coverage |
 | --- | --- |

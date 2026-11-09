@@ -2,6 +2,9 @@ name: Component tests
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
