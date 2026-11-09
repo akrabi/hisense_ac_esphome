@@ -35,7 +35,7 @@ def test_documented_example(tmp_path, example):
     (tmp_path / example).write_text((EXAMPLES / example).read_text())
     # Fixed, non-secret test values, never loaded from a developer's config.
     (tmp_path / "secrets.yaml").write_text(yaml.safe_dump({
-        "api_key": base64.b64encode(bytes(32)).decode(),
+        "api_key": base64.b64encode(bytes(range(32))).decode(),
         "ota_pass": "test-ota-password",
         "web_server_user": "test-user",
         "web_server_pass": "test-web-password",
