@@ -24,7 +24,7 @@ enum StatusOffset : size_t {
     HUMIDITY = 23,
     TEMPERATURE_COMPENSATION = 26,
     SWING = 35,
-    DISPLAY = 37,
+    DISPLAY_STATE = 37,
     COMPRESSOR_FREQUENCY = 41,
     COMPRESSOR_SETTING = 42,
     COMPRESSOR_SEND = 43,
@@ -189,7 +189,7 @@ bool decode_status(const uint8_t *frame, size_t size, DeviceStatus &status) {
     decoded.indoor_humidity_status = signed_byte(frame[HUMIDITY]);
     decoded.left_right = (frame[SWING] & HORIZONTAL_SWING_MASK) != 0;
     decoded.up_down = (frame[SWING] & VERTICAL_SWING_MASK) != 0;
-    decoded.back_led = (frame[DISPLAY] & BACK_LED_MASK) != 0;
+    decoded.back_led = (frame[DISPLAY_STATE] & BACK_LED_MASK) != 0;
     decoded.compressor_frequency = frame[COMPRESSOR_FREQUENCY];
     decoded.compressor_frequency_setting = frame[COMPRESSOR_SETTING];
     decoded.compressor_frequency_send = frame[COMPRESSOR_SEND];
