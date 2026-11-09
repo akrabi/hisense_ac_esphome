@@ -4,6 +4,15 @@ Install `requirements-dev.txt` into a virtual environment. The firmware fixtures
 are credential-free, use the local component, and require no Wi-Fi.
 Never substitute personal configurations or run `upload`/`run` for these tests.
 
+CI runs regression tests and all firmware configurations against both the
+ESPHome version pinned in `requirements-dev.txt` (2026.8.2) and the latest stable
+release. To reproduce the latest lane locally, install the requirements and then
+run `python -m pip install --upgrade esphome` in the same virtual environment.
+Each CI job prints the resolved ESPHome version.
+The same workflow runs every Monday at 06:00 UTC on the default branch to catch
+upstream compatibility breaks, and can be started manually from the Actions tab.
+The schedule takes effect once the workflow is merged into the default branch.
+
 | Configuration | Coverage |
 | --- | --- |
 | `minimal.yaml` | ESP32 Arduino, Celsius, device-reported defaults |
